@@ -37,7 +37,7 @@ Located in `bennyshub/apps/games/`:
 - **Word Jumble** — Word unscrambling game
 - **Matchy Match** — Memory matching game
 - **Benny's Peggle** — Peggle-style arcade game
-- **Bug Blaster** — Arcade shooter
+- **Bug Blaster** — Arcade tower defense game
 - **Chess & Checkers** — Classic board games
 - **Mini Golf** — Course-based mini golf with course creator
 - **Dice** — Accessible dice rolling
