@@ -760,7 +760,23 @@ function setupEventListeners() {
             resetScanning();
         } else if (action === 'open-editor') {
             document.getElementById('editor-warning-overlay').classList.add('hidden');
-            window.open('trivia editor/index.html', '_blank');
+            // Launch editor in Chrome via Electron API (or fallback to direct URL)
+            const isElectron = typeof window !== 'undefined' && window.electronAPI;
+            if (isElectron && window.electronAPI.editor) {
+                window.electronAPI.editor.open('triviamaster').then(result => {
+                    if (result.success) {
+                        console.log('[Editor] Opened trivia editor in Chrome:', result.url);
+                    } else {
+                        console.error('[Editor] Failed to open editor:', result.error);
+                        window.open('trivia editor/index.html', '_blank');
+                    }
+                }).catch(err => {
+                    console.error('[Editor] Error:', err);
+                    window.open('trivia editor/index.html', '_blank');
+                });
+            } else {
+                window.open('trivia editor/index.html', '_blank');
+            }
             resetScanning();
         } else if (action === 'open-load-game-warning') {
             document.getElementById('load-game-warning-overlay').classList.remove('hidden');

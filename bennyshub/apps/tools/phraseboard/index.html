@@ -688,7 +688,23 @@ function updateHeaderForCurrentView(){
         el.createBoardWarning.classList.add('active');
         state.modalButtons = [el.createBoardBack, el.createBoardProceed];
         state.pendingAction = () => {
-          const newTab = window.open('phrase-builder.html', '_blank', 'noopener,noreferrer');
+          // Launch editor in Chrome via Electron API (or fallback to direct URL)
+          const isElectron = typeof window !== 'undefined' && window.electronAPI;
+          if (isElectron && window.electronAPI.editor) {
+            window.electronAPI.editor.open('phraseboard').then(result => {
+              if (result.success) {
+                console.log('[Editor] Opened phrase builder in Chrome:', result.url);
+              } else {
+                console.error('[Editor] Failed to open editor:', result.error);
+                window.open('phrase-builder.html', '_blank', 'noopener,noreferrer');
+              }
+            }).catch(err => {
+              console.error('[Editor] Error:', err);
+              window.open('phrase-builder.html', '_blank', 'noopener,noreferrer');
+            });
+          } else {
+            window.open('phrase-builder.html', '_blank', 'noopener,noreferrer');
+          }
           setTimeout(() => window.focus(), 0);
         };
         if (window.NarbeVoiceManager.getSettings().ttsEnabled) {
@@ -1911,7 +1927,23 @@ function updateHeaderForCurrentView(){
     el.createBoardBack.addEventListener('click', hideWarningModal);
     el.createBoardProceed.addEventListener('click', () => {
       hideWarningModal();
-      const newTab = window.open('phrase-builder.html', '_blank', 'noopener,noreferrer');
+      // Launch editor in Chrome via Electron API (or fallback to direct URL)
+      const isElectron = typeof window !== 'undefined' && window.electronAPI;
+      if (isElectron && window.electronAPI.editor) {
+        window.electronAPI.editor.open('phraseboard').then(result => {
+          if (result.success) {
+            console.log('[Editor] Opened phrase builder in Chrome:', result.url);
+          } else {
+            console.error('[Editor] Failed to open editor:', result.error);
+            window.open('phrase-builder.html', '_blank', 'noopener,noreferrer');
+          }
+        }).catch(err => {
+          console.error('[Editor] Error:', err);
+          window.open('phrase-builder.html', '_blank', 'noopener,noreferrer');
+        });
+      } else {
+        window.open('phrase-builder.html', '_blank', 'noopener,noreferrer');
+      }
       setTimeout(() => window.focus(), 0);
     });
     el.loadBoardBack.addEventListener('click', hideWarningModal);

@@ -1052,12 +1052,13 @@ async function launchContent(url, title, type="movies", season=null, episode=nul
     }
 
     try {
-        console.log("[Streaming] Launching content:", { title, url, type });
+        console.log("[Streaming] Launching content:", { title, url, type, showTitle: saveTitle });
         if (isElectron) {
             await window.electronAPI.streaming.launch({
                 title: title || "Unknown",
                 url: url,
-                type: type || "movies"
+                type: type || "movies",
+                showTitle: saveTitle  // Pass base show name for control bar (without S#E# suffix)
             });
         } else {
             await fetch('/api/open', {
@@ -1066,7 +1067,8 @@ async function launchContent(url, title, type="movies", season=null, episode=nul
                 body: JSON.stringify({ 
                     title: title || "Unknown", 
                     url: url, 
-                    type: type || "movies" 
+                    type: type || "movies",
+                    showTitle: saveTitle  // Pass base show name for control bar (without S#E# suffix)
                 })
             });
         }
@@ -2004,7 +2006,25 @@ function closeEditorModal() {
 }
 
 function startEditor() {
-    window.location.href = 'editor.html';
+    // Launch editor in Chrome via Electron API (or fallback to direct URL)
+    const isElectron = typeof window !== 'undefined' && window.electronAPI;
+    if (isElectron && window.electronAPI.editor) {
+        window.electronAPI.editor.open('streaming').then(result => {
+            if (result.success) {
+                console.log('[Editor] Opened streaming editor in Chrome:', result.url);
+            } else {
+                console.error('[Editor] Failed to open editor:', result.error);
+                // Fallback to direct navigation
+                window.location.href = 'editor.html';
+            }
+        }).catch(err => {
+            console.error('[Editor] Error:', err);
+            window.location.href = 'editor.html';
+        });
+    } else {
+        // Non-Electron fallback
+        window.location.href = 'editor.html';
+    }
 }
 
 let editorModalIndex = 0;

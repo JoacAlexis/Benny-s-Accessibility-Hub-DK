@@ -38,7 +38,8 @@
       "description": "Editable phrase & media tiles with scanning and speak-out.",
       "path": "apps/tools/phraseboard/index.html",
       "image": "images/tools/phraseboard.png",
-      "genres": ["Communication", "Accessibility"]
+      "genres": ["Communication", "Accessibility"],
+      "needsServer": true
     },
     {
       "id": "journal",

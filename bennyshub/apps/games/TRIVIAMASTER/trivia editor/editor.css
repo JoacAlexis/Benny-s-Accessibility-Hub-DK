@@ -10,6 +10,17 @@
     --spacing: 1rem;
 }
 
+/* Font Awesome fallback - hide Unicode fallback when FA icons load */
+.fas + .fa-fallback,
+.fa + .fa-fallback,
+.far + .fa-fallback {
+    display: none;
+}
+/* If FA doesn't load, hide the empty i tag and show fallback */
+.fa-fallback {
+    font-style: normal;
+}
+
 * {
     box-sizing: border-box;
     margin: 0;

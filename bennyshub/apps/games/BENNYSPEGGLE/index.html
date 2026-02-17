@@ -1369,7 +1369,23 @@ class Game{
             if(this.warningIndex===1){
                 // Proceed (1)
                 if(this.appState==='editorWarning'){
-                    window.open('BENNYS-PEGGLE-EDITOR2.html', '_blank');
+                    // Launch editor in Chrome via Electron API (or fallback to direct URL)
+                    const isElectron = typeof window !== 'undefined' && window.electronAPI;
+                    if (isElectron && window.electronAPI.editor) {
+                        window.electronAPI.editor.open('peggle').then(result => {
+                            if (result.success) {
+                                console.log('[Editor] Opened peggle editor in Chrome:', result.url);
+                            } else {
+                                console.error('[Editor] Failed to open editor:', result.error);
+                                window.open('editor.html', '_blank');
+                            }
+                        }).catch(err => {
+                            console.error('[Editor] Error:', err);
+                            window.open('editor.html', '_blank');
+                        });
+                    } else {
+                        window.open('editor.html', '_blank');
+                    }
                     this.appState = this.warningPrevState;
                     this.lastMenuScan = performance.now() + 1000;
                 } else {
@@ -1861,7 +1877,23 @@ class Game{
         if(this.warningIndex===1){
            // Proceed
            if(this.appState==='editorWarning'){
-               window.open('BENNYS-PEGGLE-EDITOR2.html', '_blank');
+               // Launch editor in Chrome via Electron API (or fallback to direct URL)
+               const isElectron = typeof window !== 'undefined' && window.electronAPI;
+               if (isElectron && window.electronAPI.editor) {
+                   window.electronAPI.editor.open('peggle').then(result => {
+                       if (result.success) {
+                           console.log('[Editor] Opened peggle editor in Chrome:', result.url);
+                       } else {
+                           console.error('[Editor] Failed to open editor:', result.error);
+                           window.open('editor.html', '_blank');
+                       }
+                   }).catch(err => {
+                       console.error('[Editor] Error:', err);
+                       window.open('editor.html', '_blank');
+                   });
+               } else {
+                   window.open('editor.html', '_blank');
+               }
                this.appState = this.warningPrevState;
                this.lastMenuScan = performance.now(); // Reset scan timer 
            } else {

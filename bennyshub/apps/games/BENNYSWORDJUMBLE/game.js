@@ -535,7 +535,23 @@ class WordJumbleGame {
     
     openEditor() {
         this.showMouseWarning(() => {
-             window.open('editor.html', '_blank');
+            // Launch editor in Chrome via Electron API (or fallback to direct URL)
+            const isElectron = typeof window !== 'undefined' && window.electronAPI;
+            if (isElectron && window.electronAPI.editor) {
+                window.electronAPI.editor.open('wordjumble').then(result => {
+                    if (result.success) {
+                        console.log('[Editor] Opened word jumble editor in Chrome:', result.url);
+                    } else {
+                        console.error('[Editor] Failed to open editor:', result.error);
+                        window.open('editor.html', '_blank');
+                    }
+                }).catch(err => {
+                    console.error('[Editor] Error:', err);
+                    window.open('editor.html', '_blank');
+                });
+            } else {
+                window.open('editor.html', '_blank');
+            }
         }, 'menu'); // Came from menu
     }
     

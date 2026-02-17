@@ -1,3 +1,6 @@
+// In-memory cache for custom loaded assets (avoids localStorage quota issues)
+const assetCache = {};
+
 const state = {
     mode: 'menu', // menu, game, pause
     menuState: 'main', // main, singlePlayer, twoPlayer, settings, difficulty, category, editorWarning, setup
@@ -44,11 +47,7 @@ const state = {
     challengePlus: {
         level: 0,
         levels: []
-    },
-    gameSource: localStorage.getItem('matchy_game_source') || 'ALL', 
-    onlinePacks: [], 
-    localPacks: [],
-    customAssets: {} // In-memory registry for Blob URLs
+    }
 };
 
 const settings = {
@@ -141,8 +140,6 @@ async function init() {
     // Initialize assets structure
     state.assets = { categories: {} };
     state.packs = [];
-    state.onlinePacks = [];
-    state.localPacks = [];
 
     // 1. Load Server Manifest
     try {
@@ -151,38 +148,18 @@ async function init() {
             const data = await response.json();
             
             if (data.packs && Array.isArray(data.packs)) {
-                state.onlinePacks = data.packs;
+                state.packs = data.packs;
             } else if (data.categories) {
                 // Legacy Mode: Manifest IS the data
                 console.log("Legacy manifest detected");
-                state.onlinePacks = ["Default Game"]; // Placeholder
-                state.assets.categories = data.categories; 
-                // Note: If legacy, loading specific packs might fail if we don't handle "Default Game" special case
+                state.packs = ["Default Game"]; // Placeholder
+                state.assets.categories = data.categories;
             }
         }
     } catch (e) {
         console.error("Failed to load server manifest:", e);
     }
 
-    // 2. Load Local Registry
-    try {
-        state.localPacks = JSON.parse(localStorage.getItem('matchy_local_registry') || '[]');
-    } catch(e) {
-        console.error("Failed to load local registry", e);
-    }
-    
-    // 3. Combine based on Source
-    refreshPacks(); // Will populate state.packs and load first 
-
-    setupInput();
-    applyTheme();
-    handleResize(); // Initial sizing check
-    window.addEventListener('resize', handleResize);
-    showMainMenu();
-}
-
-/*
-// Deprecated old init logic for merging
     // 2. Merge Local Registry (Browser Priority)
     try {
         const localReg = JSON.parse(localStorage.getItem('matchy_local_registry') || '[]');
@@ -225,7 +202,13 @@ async function init() {
         
         await loadPack(state.packs[0]);
     }
-*/
+
+    setupInput();
+    applyTheme();
+    handleResize(); // Initial sizing check
+    window.addEventListener('resize', handleResize);
+    showMainMenu();
+}
 
 function handleResize() {
     if (state.mode === 'game') {
@@ -249,7 +232,7 @@ async function loadPack(filename) {
 
     if (filename === '__ALL__') {
         state.assets.categories = {};
-        const realPacks = state.packs.filter(p => p !== '__ALL__' && p !== 'Default Game');
+        const realPacks = state.packs.filter(p => p !== '__ALL__');
         
         for (const pack of realPacks) {
              const data = await fetchPackData(pack);
@@ -273,14 +256,6 @@ async function loadPack(filename) {
         return;
     }
     
-    // Clear categories before loading new pack (unless it's __ALL__)
-    state.assets.categories = {};
-
-    if (filename === "Default Game") {
-         console.log("No pack selected / Empty state");
-         return; 
-    }
-    
     const data = await fetchPackData(filename);
     if (data && data.categories) {
         state.assets.categories = data.categories;
@@ -289,42 +264,29 @@ async function loadPack(filename) {
 }
 
 async function fetchPackData(filename) {
-    let allowLocal = true;
-    let allowNetwork = true;
-    
-    if (state.gameSource === 'Online') {
-        allowLocal = false;
-    } else if (state.gameSource === 'Local') {
-        allowNetwork = false;
-    }
-
     // 1. Try Local Storage Pack first (Prioritize Local)
-    if (allowLocal) {
-        try {
-            const localContent = localStorage.getItem('matchy_pack_' + filename);
-            if (localContent) {
-                const data = JSON.parse(localContent);
-                if (data && data.categories) {
-                    return data;
-                }
+    try {
+        const localContent = localStorage.getItem('matchy_pack_' + filename);
+        if (localContent) {
+            const data = JSON.parse(localContent);
+            if (data && data.categories) {
+                return data;
             }
-        } catch(e) {
-            console.warn("Error reading local pack", e);
         }
+    } catch(e) {
+        console.warn("Error reading local pack", e);
     }
 
     // 2. Fetch from Server
-    if (allowNetwork) {
-        try {
-            const res = await fetch(filename); 
-            if (res.ok) {
-                return await res.json();
-            } else {
-                console.error("Failed to fetch pack:", filename);
-            }
-        } catch (e) {
-            console.error("Error loading pack:", e);
+    try {
+        const res = await fetch(filename + '?t=' + Date.now()); // Prevent caching
+        if (res.ok) {
+            return await res.json();
+        } else {
+            console.error("Failed to fetch pack:", filename);
         }
+    } catch (e) {
+        console.error("Error loading pack:", e);
     }
     return null;
 }
@@ -344,23 +306,17 @@ async function cyclePack(dir) {
     if (state.packs.length <= 1) return;
     
     // Legacy support check
-    // if (state.packs[0] === "Default Game") return; // Allow cycling if we have multiple, even if one is named Default
+    if (state.packs[0] === "Default Game") return;
 
     state.currentPackIndex = (state.currentPackIndex + dir + state.packs.length) % state.packs.length;
     await loadPack(state.packs[state.currentPackIndex]);
     
     // Reset setup state as categories might have changed
-    let cats = Object.keys(state.assets.categories || {});
-    cats = cats.filter(c => c !== 'Unassigned');
-    state.setup.categories = ['All', ...cats];
-    
+    state.setup.categories = [];
     state.setup.categoryIndex = 0;
-    state.category = 'All'; // Default to All
-
-    // Refresh board sizes and UI
-    updateBoardSizes();
+    
     renderMenu();
-    speak("Pack: " + getPackTitle());
+    speak("Match Category: " + getPackTitle());
 }
 
 // --- Input Handling ---
@@ -534,7 +490,6 @@ const menus = {
     main: [
         { text: "Single Player", action: () => showSinglePlayerMenu() },
         { text: "Two Player", action: () => showTwoPlayerMenu() },
-        { text: () => `Game Source: ${state.gameSource}`, action: () => cycleGameSource(), onPrev: () => cycleGameSource(-1) },
         { text: "Load Custom Game", action: () => showLoadWarning() },
         { text: "Settings", action: () => showSettingsMenu() },
         { text: "Exit", action: () => {
@@ -566,9 +521,9 @@ const menus = {
         { text: () => `Sound: ${settings.sound ? 'On' : 'Off'}`, action: () => toggleSound(), onPrev: () => toggleSound() },
         { text: () => `Highlight Style: ${settings.highlightStyle === 'outline' ? 'Outline' : 'Full Cell'}`, action: () => toggleHighlightStyle(), onPrev: () => toggleHighlightStyle() },
         { text: () => `Highlight Color: ${highlightColors[settings.highlightColorIndex]}`, action: () => cycleHighlightColor(1), onPrev: () => cycleHighlightColor(-1) },
+        { text: () => `P1 Color: ${settings.p1Color}${getColorSwatch(settings.p1Color)}`, action: () => cycleP1Color(1), onPrev: () => cycleP1Color(-1) },
         { text: () => `P2 Color: ${settings.p2Color}${getColorSwatch(settings.p2Color)}`, action: () => cycleP2Color(1), onPrev: () => cycleP2Color(-1) },
         { text: "Open Editor", action: () => showEditorWarning() },
-        { text: "Clear Local Cache", action: () => clearLocalCache() },
         { text: () => `Voice: ${getVoiceName()}`, action: () => cycleVoice(1), onPrev: () => cycleVoice(-1) },
         { 
             text: () => {
@@ -684,78 +639,6 @@ const menus = {
     setup: []
 };
 
-function clearLocalCache() {
-    if (confirm("Are you sure you want to delete all locally saved games and assets? This cannot be undone.")) {
-         const keysToRemove = [];
-         for (let i = 0; i < localStorage.length; i++) {
-             const key = localStorage.key(i);
-             if (key.startsWith('matchy_pack_') || key.startsWith('matchy_asset_') || key === 'matchy_local_registry') {
-                 keysToRemove.push(key);
-             }
-         }
-         keysToRemove.forEach(k => localStorage.removeItem(k));
-         
-         state.localPacks = [];
-         refreshPacks();
-         speak("Local cache cleared");
-         
-         // Force switch to Online or ALL if currently Local
-         if (state.gameSource === 'Local') {
-             state.gameSource = 'ALL';
-             localStorage.setItem('matchy_game_source', 'ALL');
-             refreshPacks();
-         }
-         
-         renderMenu();
-    }
-}
-
-function cycleGameSource(dir = 1) {
-    const sources = ['ALL', 'Local', 'Online'];
-    let idx = sources.indexOf(state.gameSource);
-    if (idx === -1) idx = 0;
-    
-    idx = (idx + dir + sources.length) % sources.length;
-    state.gameSource = sources[idx];
-    localStorage.setItem('matchy_game_source', state.gameSource);
-    
-    refreshPacks();
-    renderMenu();
-    speak("Game Source: " + state.gameSource);
-}
-
-function refreshPacks() {
-    let newPacks = [];
-    
-    // Filter duplicates helper (simple version, assuming unique filenames mostly)
-    // Actually, local overrides online if Same Name?
-    // Let's just combine for now based on source
-    
-    if (state.gameSource === 'Online') {
-        newPacks = [...state.onlinePacks];
-    } else if (state.gameSource === 'Local') {
-        newPacks = [...state.localPacks];
-    } else {
-        // ALL: Combine unique paths from both lists
-        const allPaths = new Set([...state.onlinePacks, ...state.localPacks]);
-        newPacks = Array.from(allPaths);
-    }
-    
-    // Ensure __ALL__ is present if needed
-    // Only if we have multiple packs
-    if (newPacks.length > 0) {
-        newPacks.unshift('__ALL__');
-    } else {
-        newPacks = ["Default Game"]; // Fallback
-    }
-    
-    state.packs = newPacks;
-    state.currentPackIndex = 0;
-    
-    // Attempt to load the new first pack
-    loadPack(state.packs[0]).catch(console.error);
-}
-
 function showMainMenu() {
     const overlay = document.getElementById('pause-overlay');
     if (overlay) overlay.remove();
@@ -794,7 +677,23 @@ function showEditorWarning() {
 }
 
 function openEditor() {
-    window.open('editor.html', '_blank');
+    // Launch editor in Chrome via Electron API (or fallback to direct URL)
+    const isElectron = typeof window !== 'undefined' && window.electronAPI;
+    if (isElectron && window.electronAPI.editor) {
+        window.electronAPI.editor.open('matchymatch').then(result => {
+            if (result.success) {
+                console.log('[Editor] Opened matchymatch editor in Chrome:', result.url);
+            } else {
+                console.error('[Editor] Failed to open editor:', result.error);
+                window.open('editor.html', '_blank');
+            }
+        }).catch(err => {
+            console.error('[Editor] Error:', err);
+            window.open('editor.html', '_blank');
+        });
+    } else {
+        window.open('editor.html', '_blank');
+    }
 }
 
 function showLoadWarning() {
@@ -823,63 +722,58 @@ function promptLoadGame() {
         for (const file of files) {
             if (file.name.toLowerCase().endsWith('.json')) {
                 jsonFiles.push(file);
-            } else if (file.type.startsWith('image/') || file.type.startsWith('audio/') || /\.(png|jpe?g|gif|webp|svg|mp3|wav|ogg)$/i.test(file.name)) {
+            } else if (file.type.startsWith('image/') || file.type.startsWith('audio/')) {
                 assets.push(file);
             }
         }
         
+        // Helper to read file as DataURL
+        const readFileAsDataURL = (file) => {
+            return new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve({ name: file.name, data: reader.result });
+                reader.onerror = () => {
+                    console.warn("Error reading file:", file.name);
+                    resolve(null); // Return null instead of rejecting
+                };
+                reader.readAsDataURL(file);
+            });
+        };
+
         // Helper to read JSON
         const readJSON = (file) => {
-             return new Promise((resolve, reject) => {
+             return new Promise((resolve) => {
                 const reader = new FileReader();
                 reader.onload = () => {
                     try {
                         const json = JSON.parse(reader.result);
                         resolve({ name: file.name, json });
                     } catch (err) {
+                        console.warn("Error parsing JSON:", file.name, err);
                         resolve(null); // content parse error
                     }
                 };
-                reader.onerror = reject;
+                reader.onerror = () => {
+                    console.warn("Error reading JSON file:", file.name);
+                    resolve(null); // Return null instead of rejecting
+                };
                 reader.readAsText(file);
             });
         };
 
         try {
-            // 1. Load Assets: Use Blob URLs to bypass Local Storage limits
-            state.customAssets = {}; // Reset custom registry
-        
-            // Clear old local storage assets to free up space and prevent conflicts
-            let clearedCount = 0;
-            for (let i = localStorage.length - 1; i >= 0; i--) {
-                const key = localStorage.key(i);
-                if (key && key.startsWith('matchy_asset_')) {
-                    localStorage.removeItem(key);
-                    clearedCount++;
-                }
-            }
-            if (clearedCount > 0) console.log(`Cleared ${clearedCount} old assets from storage.`);
-
-            let assetCount = 0;
+            // 1. Load Assets
+            const assetResults = await Promise.all(assets.map(readFileAsDataURL));
             
-            assets.forEach(file => {
-                // Determine keys: filename, lowercase filename, maybe without ext?
-                // Just store by basename for now as resolver uses that
-                try {
-                    const url = URL.createObjectURL(file);
-                    state.customAssets[file.name] = url;
-                    // Add lowercase alias just in case
-                    if (file.name !== file.name.toLowerCase()) {
-                        state.customAssets[file.name.toLowerCase()] = url;
-                    }
+            // 2. Save Assets to in-memory cache (avoids localStorage quota issues)
+            let assetCount = 0;
+            assetResults.forEach(item => {
+                if (item) {
+                    assetCache[item.name] = item.data;
                     assetCount++;
-                } catch (e) {
-                    console.error("Error creating blob for", file.name, e);
                 }
             });
-            console.log(`Registered ${assetCount} assets in memory.`);
-            // alert(`Loaded ${assetCount} assets into memory.`); // Debug
-            speak(`${assetCount} assets loaded successfully.`);
+            console.log(`Loaded ${assetCount} assets into memory cache.`);
 
             // 3. Load JSON definition(s)
             // We only really support one pack definition structure right now, 
@@ -892,14 +786,8 @@ function promptLoadGame() {
                 const data = validPack.json;
                 const filename = validPack.name;
                 
-                // Save to Local Storage Registry
-                localStorage.setItem('matchy_pack_' + filename, JSON.stringify(data));
-                
-                const localReg = JSON.parse(localStorage.getItem('matchy_local_registry') || '[]');
-                if (!localReg.includes(filename)) {
-                    localReg.push(filename);
-                    localStorage.setItem('matchy_local_registry', JSON.stringify(localReg));
-                }
+                // Skip localStorage for pack data - just keep in memory to avoid quota issues
+                // The pack will need to be reloaded next session, but that's fine
 
                 // Update runtime state
                 let packIndex = state.packs.findIndex(p => p === filename || p.endsWith('/' + filename));
@@ -924,9 +812,9 @@ function promptLoadGame() {
                 alert("No valid .json game file found in the selected folder.");
             }
         } catch (err) {
-            console.error(err);
+            console.error("Error loading files:", err);
             speak("Error loading files");
-            alert("Error loading files");
+            alert("Error loading files: " + err.message);
         }
     };
     input.click();
@@ -1008,13 +896,7 @@ function updateBoardSizes() {
 function updateSetupMenu() {
     menus.setup = [
         { 
-            text: () => `Pack: ${getPackTitle()}`, 
-            action: () => cyclePack(1),
-            onPrev: () => cyclePack(-1)
-        },
-        { 
-            text: () => `Category: ${state.category}`, 
-            tts: () => `Category: ${state.category}`,
+            text: () => `Category: ${state.setup.categories[state.setup.categoryIndex]}`, 
             action: () => cycleCategory(1),
             onPrev: () => cycleCategory(-1)
         },
@@ -1763,16 +1645,8 @@ function generateGrid() {
     let cards = [];
     selectedCards.forEach(card => {
         const name = card.title || "Untitled";
-        let imagePath = '';
-        if (card.image) {
-            if (card.image.startsWith('http') || card.image.startsWith('data:')) {
-                imagePath = card.image;
-            } else if (card.image.startsWith('assets/')) {
-                imagePath = card.image;
-            } else {
-                imagePath = `assets/${card.image}`;
-            }
-        }
+        // Just store the raw image path - resolveAsset will handle it during rendering
+        let imagePath = card.image || '';
         
         const altTitle = card.altTitle || "";
         cards.push({ name, image: imagePath, altTitle });
@@ -2462,31 +2336,26 @@ function announceRoundStart() {
 
 // Asset resolution helper
 function resolveAsset(path) {
-    if (!path) return '';
+    if (!path) {
+        console.warn("resolveAsset called with empty path");
+        return '';
+    }
     
-    // 1. Check Local Asset Registry (In-Memory Blob first, then LocalStorage)
-    let fileName = path.split('/').pop().split('?')[0]; // Extract filename
-    try { fileName = decodeURIComponent(fileName); } catch(e) {}
-
-    // Check in-memory custom assets (Blob URLs)
-    if (state.customAssets) {
-        if (state.customAssets[fileName]) return state.customAssets[fileName];
-        if (state.customAssets[fileName.toLowerCase()]) return state.customAssets[fileName.toLowerCase()];
+    // Extract just the filename for cache lookup
+    const fileName = path.split('/').pop().split('?')[0]; 
+    
+    // 1. Check in-memory cache first (for custom loaded packs)
+    if (assetCache[fileName]) {
+        return assetCache[fileName]; // Return data URL from memory
     }
 
-    const localKey = 'matchy_asset_' + fileName;
-    const localData = localStorage.getItem(localKey);
-    if (localData) {
-        return localData; 
-    }
-
-    // 2. Default Path Handling
+    // 2. Default Path Handling for server-based files
     if (path.startsWith('http') || path.startsWith('data:')) {
         return path;
-    } else if (path.startsWith('assets/')) {
+    } else if (path.startsWith('packs/')) {
         return path;
     } else {
-        return `assets/${path}`;
+        return `packs/${path}`;
     }
 }
 

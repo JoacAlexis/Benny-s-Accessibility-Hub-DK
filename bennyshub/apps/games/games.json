@@ -102,7 +102,8 @@
       "description": "A trivia game engine that lets you build your own trivia games! Add pictures and videos to make it more fun!",
       "path": "apps/games/TRIVIAMASTER/index.html",
       "image": "images/games/triviamaster.png",
-      "genres": ["Educational", "Trivia"]
+      "genres": ["Educational", "Trivia"],
+      "needsServer": true
     }
   ]
 }
