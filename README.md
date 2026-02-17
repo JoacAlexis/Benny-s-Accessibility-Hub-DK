@@ -1,6 +1,6 @@
 # Benny's Accessibility Hub 2.0
 
-**A bespoke software suite for single-switch accessibility, built with Electron.**
+**A bespoke software suite for two and one-switch accessibility, built with Electron.**
 
 This project provides an accessible computing environment designed for users who operate a computer with limited input methods (such as a single switch). The hub provides games, communication tools, a journal, media streaming control, and more—all navigable via switch scanning.
 
@@ -37,7 +37,7 @@ Located in `bennyshub/apps/games/`:
 - **Word Jumble** — Word unscrambling game
 - **Matchy Match** — Memory matching game
 - **Benny's Peggle** — Peggle-style arcade game
-- **Bug Blaster** — Arcade shooter
+- **Bug Blaster** — Arcade tower defense game
 - **Chess & Checkers** — Classic board games
 - **Mini Golf** — Course-based mini golf with course creator
 - **Dice** — Accessible dice rolling
