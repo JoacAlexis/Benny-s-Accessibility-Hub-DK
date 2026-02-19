@@ -2,6 +2,45 @@ let allData = [];
 let genreData = {}; // Map: "Action" -> "http://image.url"
 const TMDB_KEY_STORAGE = 'tmdb_api_key';
 
+// API Proxy helper - routes external API calls through local proxy to bypass CORS
+// Works in both Chrome (direct) and Electron (via localhost proxy)
+function getApiUrl(service, path) {
+    // When running in Electron or on localhost, use the proxy
+    const isLocalhost = window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost';
+    if (isLocalhost) {
+        // Use the local server's API proxy (same origin, avoids CORS)
+        return `/api/proxy/${service}/${path}`;
+    }
+    // Direct API access (for testing in browser outside of Electron)
+    const baseUrls = {
+        'tmdb': 'https://api.themoviedb.org',
+        'opensymbols': 'https://www.opensymbols.org/api/v1',
+        'freesound': 'https://api.freesound.org',
+        'freesound-proxy': 'https://aged-thunder-a674.narbehousellc.workers.dev'
+    };
+    return `${baseUrls[service]}/${path}`;
+}
+
+// Non-blocking confirm dialog (replaces confirm() to avoid focus issues)
+function showConfirm(message) {
+    return new Promise((resolve) => {
+        const overlay = document.createElement('div');
+        overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);z-index:10000;display:flex;align-items:center;justify-content:center;';
+        const dialog = document.createElement('div');
+        dialog.style.cssText = 'background:#1b1b1b;border:1px solid #333;padding:24px;border-radius:12px;max-width:400px;text-align:center;color:#f5f5f5;';
+        dialog.innerHTML = `<p style="margin:0 0 20px 0;font-size:16px;white-space:pre-wrap;">${message}</p>
+            <div style="display:flex;gap:12px;justify-content:center;">
+                <button id="confirm-ok" style="padding:10px 24px;background:#2b6cf0;color:white;border:none;border-radius:8px;cursor:pointer;font-size:14px;">OK</button>
+                <button id="confirm-cancel" style="padding:10px 24px;background:#333;color:white;border:none;border-radius:8px;cursor:pointer;font-size:14px;">Cancel</button>
+            </div>`;
+        overlay.appendChild(dialog);
+        document.body.appendChild(overlay);
+        dialog.querySelector('#confirm-ok').onclick = () => { document.body.removeChild(overlay); resolve(true); };
+        dialog.querySelector('#confirm-cancel').onclick = () => { document.body.removeChild(overlay); resolve(false); };
+        dialog.querySelector('#confirm-ok').focus();
+    });
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     fetchData();
     setupForm();
@@ -31,7 +70,7 @@ async function fetchData() {
         console.error('Error loading data:', error);
         const tbody = document.querySelector('#data-table tbody');
         if (tbody) tbody.innerHTML = `<tr><td colspan="4" style="color:red; text-align:center;">Error loading data: ${error.message}</td></tr>`;
-        alert("Critical Error: Could not load data.json. Ensure server is running.");
+        showToast("Critical Error: Could not load data.json. Ensure server is running.");
     }
 }
 
@@ -165,8 +204,8 @@ async function handleTMDBFetch() {
     const yearInput = document.getElementById('year').value.trim();
     const directorInput = document.getElementById('director').value.toLowerCase().trim();
     
-    if (!key) { alert("Please enter a TMDB API Key."); return; }
-    if (!title) { alert("Please enter a Title to search."); return; }
+    if (!key) { showToast("Please enter a TMDB API Key."); return; }
+    if (!title) { showToast("Please enter a Title to search."); return; }
     
     document.getElementById('btn-fetch-tmdb').textContent = "Searching...";
     
@@ -174,7 +213,7 @@ async function handleTMDBFetch() {
     const hasSpecificCriteria = yearInput || directorInput;
     
     try {
-        const res = await fetch(`https://api.themoviedb.org/3/search/multi?api_key=${key}&query=${encodeURIComponent(title)}`);
+        const res = await fetch(getApiUrl('tmdb', `3/search/multi?api_key=${key}&query=${encodeURIComponent(title)}`));
         const data = await res.json();
         
         if (data.results && data.results.length > 0) {
@@ -182,7 +221,7 @@ async function handleTMDBFetch() {
             let candidates = data.results.filter(x => x.media_type === 'movie' || x.media_type === 'tv');
 
             if (candidates.length === 0) {
-                alert("No movies or TV shows found for that title.");
+                showToast("No movies or TV shows found for that title.");
                 document.getElementById('btn-fetch-tmdb').textContent = "Auto-Fill (TMDB)";
                 return;
             }
@@ -190,7 +229,7 @@ async function handleTMDBFetch() {
             // Check each candidate against the user's criteria
             for (const candidate of candidates) {
                 const type = candidate.media_type;
-                const detailsRes = await fetch(`https://api.themoviedb.org/3/${type}/${candidate.id}?api_key=${key}&append_to_response=credits`);
+                const detailsRes = await fetch(getApiUrl('tmdb', `3/${type}/${candidate.id}?api_key=${key}&append_to_response=credits`));
                 const details = await detailsRes.json();
                 
                 // Check Year Match (STRICT if provided)
@@ -247,7 +286,7 @@ async function handleTMDBFetch() {
                 let criteria = [];
                 if (yearInput) criteria.push(`year ${yearInput}`);
                 if (directorInput) criteria.push(`director "${directorInput}"`);
-                alert(`No match found for "${title}" with ${criteria.join(' and ')}.\n\nTMDB may not have this exact movie, or the criteria don't match their records.\n\nTry removing some criteria or check spelling.`);
+                showToast(`No match found for "${title}" with ${criteria.join(' and ')}.\n\nTMDB may not have this exact movie, or the criteria don't match their records.\n\nTry removing some criteria or check spelling.`);
                 document.getElementById('btn-fetch-tmdb').textContent = "Auto-Fill (TMDB)";
                 return;
             }
@@ -259,19 +298,19 @@ async function handleTMDBFetch() {
             
             if (best) {
                 const type = best.media_type;
-                const detailsRes = await fetch(`https://api.themoviedb.org/3/${type}/${best.id}?api_key=${key}&append_to_response=credits,videos`);
+                const detailsRes = await fetch(getApiUrl('tmdb', `3/${type}/${best.id}?api_key=${key}&append_to_response=credits,videos`));
                 const details = await detailsRes.json();
                 
                 populateFormFromTMDB(details, type);
             } else {
-                alert("No movies or TV shows found matching your criteria.");
+                showToast("No movies or TV shows found matching your criteria.");
             }
         } else {
-            alert("No results found on TMDB for that title.");
+            showToast("No results found on TMDB for that title.");
         }
     } catch(e) {
         console.error(e);
-        alert("TMDB Error: " + e.message);
+        showToast("TMDB Error: " + e.message);
     }
     
     document.getElementById('btn-fetch-tmdb').textContent = "Auto-Fill (TMDB)";
@@ -323,14 +362,27 @@ function populateFormFromTMDB(data, type) {
     
     document.getElementById('title').value = (type === 'movie' ? data.title : data.name);
     
-    alert(`Found: ${type==='movie'?data.title:data.name} (${year})`);
+    const titleText = type === 'movie' ? data.title : data.name;
+    
+    // Check if URL is filled
+    const url = document.getElementById('url').value.trim();
+    if (url) {
+        showToast(`Found: ${titleText} (${year}) - Click Add to save.`);
+    } else {
+        showToast(`Found: ${titleText} (${year}) - Enter a URL first, then click Add.`, 'warning');
+        // Highlight URL field to show it's required
+        const urlField = document.getElementById('url');
+        urlField.focus();
+        urlField.style.border = '2px solid #ffc107';
+        setTimeout(() => { urlField.style.border = ''; }, 3000);
+    }
 }
 
 async function handleBatchUpdate() {
     const key = document.getElementById('tmdb-key').value;
-    if (!key) { alert("Please enter TMDB Key first."); return; }
+    if (!key) { showToast("Please enter TMDB Key first."); return; }
     
-    if (!confirm("This will attempt to update MISSING fields for items using TMDB search. This may take a while. Continue?")) return;
+    if (!await showConfirm("This will attempt to update MISSING fields for items using TMDB search. This may take a while. Continue?")) return;
     
     const btn = document.getElementById('btn-batch-tmdb');
     btn.textContent = "Processing...";
@@ -367,7 +419,7 @@ async function handleBatchUpdate() {
         // Stop if too many errors
         if (consecutiveErrors > 5) {
             console.error("Too many consecutive API errors. Aborting batch update to prevent lock.");
-            alert("Batch update aborted due to API errors (Rate Limit?). Try again later.");
+            showToast("Batch update aborted due to API errors (Rate Limit?). Try again later.");
             break;
         }
 
@@ -376,7 +428,7 @@ async function handleBatchUpdate() {
         
         try {
             // Search
-            const res = await fetch(`https://api.themoviedb.org/3/search/multi?api_key=${key}&query=${encodeURIComponent(item.title)}`);
+            const res = await fetch(getApiUrl('tmdb', `3/search/multi?api_key=${key}&query=${encodeURIComponent(item.title)}`));
             
             if (res.status === 429) {
                 // Rate limited - wait longer and retry or skip
@@ -411,7 +463,7 @@ async function handleBatchUpdate() {
                 
                 if (best) {
                     const type = best.media_type;
-                    const detailsRes = await fetch(`https://api.themoviedb.org/3/${type}/${best.id}?api_key=${key}&append_to_response=credits,videos`);
+                    const detailsRes = await fetch(getApiUrl('tmdb', `3/${type}/${best.id}?api_key=${key}&append_to_response=credits,videos`));
                      if (detailsRes.status === 429) {
                         console.warn("Rate limit hit during details fetch. Pausing...");
                         await new Promise(r => setTimeout(r, 5000));
@@ -460,7 +512,7 @@ async function handleBatchUpdate() {
     
     btn.textContent = "Saving...";
     await saveData();
-    alert(`Batch Update Complete. Updated ${updatedCount} items.`);
+    showToast(`Batch Update Complete. Updated ${updatedCount} items.`);
     btn.textContent = "Batch Update Missing Info";
     btn.disabled = false;
     renderTable();
@@ -568,20 +620,20 @@ async function saveGenres() {
     });
 
     try {
-        const response = await fetch('save_genres', {
+        const response = await fetch('/api/save-genres', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(newGenreData)
         });
         if (response.ok) {
             genreData = newGenreData;
-            alert('Genre images saved!');
+            showToast('Genre images saved!');
         } else {
-            alert('Error saving genres');
+            showToast('Error saving genres');
         }
     } catch (e) {
         console.error(e);
-        alert('Error saving genres');
+        showToast('Error saving genres');
     }
 }
 
@@ -655,10 +707,10 @@ function expandAllEditors() {
     });
 }
 
-function expandSelectedEditors() {
+async function expandSelectedEditors() {
     const selectedIds = getSelectedIds();
     if (selectedIds.length === 0) {
-        if(confirm("No items checked. Expand ALL visible items?")) {
+        if(await showConfirm("No items checked. Expand ALL visible items?")) {
             expandAllEditors();
         }
         return;
@@ -682,21 +734,21 @@ function expandSelectedEditors() {
     });
 }
 
-function deleteSelectedItems() {
+async function deleteSelectedItems() {
     const selectedIds = getSelectedIds();
     if (selectedIds.length === 0) {
-        alert("Please select items to delete.");
+        showToast("Please select items to delete.");
         return;
     }
     
-    if (!confirm(`Are you sure you want to delete ${selectedIds.length} items? This cannot be undone.`)) return;
+    if (!await showConfirm(`Are you sure you want to delete ${selectedIds.length} items? This cannot be undone.`)) return;
     
     // Remove from allData
     allData = allData.filter(item => !selectedIds.includes(item.id));
     
     saveData();
     renderTable(); // Re-render to show removal
-    alert("Deleted selected items.");
+    showToast("Deleted selected items.");
 }
 
 function renderInlineEditor(item, row) {
@@ -849,8 +901,8 @@ async function autoFillInline(sid) {
     const yearInput = document.getElementById(`year-${sid}`).value.trim();
     const directorInput = document.getElementById(`director-${sid}`).value.toLowerCase().trim();
     
-    if (!key) { alert("Please enter TMDB API Key at top of page."); return; }
-    if (!titleVal) { alert("Enter a Title first."); return; }
+    if (!key) { showToast("Please enter TMDB API Key at top of page."); return; }
+    if (!titleVal) { showToast("Enter a Title first."); return; }
     
     const hasSpecificCriteria = yearInput || directorInput;
     
@@ -860,7 +912,7 @@ async function autoFillInline(sid) {
     btn.disabled = true;
 
     try {
-        const res = await fetch(`https://api.themoviedb.org/3/search/multi?api_key=${key}&query=${encodeURIComponent(titleVal)}`);
+        const res = await fetch(getApiUrl('tmdb', `3/search/multi?api_key=${key}&query=${encodeURIComponent(titleVal)}`));
         const searchData = await res.json();
         
         if (searchData.results && searchData.results.length > 0) {
@@ -868,7 +920,7 @@ async function autoFillInline(sid) {
             let candidates = searchData.results.filter(x => x.media_type === 'movie' || x.media_type === 'tv');
             
             if (candidates.length === 0) {
-                alert("No movies or TV shows found for that title.");
+                showToast("No movies or TV shows found for that title.");
                 btn.textContent = originalText;
                 btn.disabled = false;
                 return;
@@ -877,7 +929,7 @@ async function autoFillInline(sid) {
             // Check each candidate against the user's criteria
             for (const candidate of candidates) {
                 const type = candidate.media_type;
-                const detailsRes = await fetch(`https://api.themoviedb.org/3/${type}/${candidate.id}?api_key=${key}&append_to_response=credits`);
+                const detailsRes = await fetch(getApiUrl('tmdb', `3/${type}/${candidate.id}?api_key=${key}&append_to_response=credits`));
                 const details = await detailsRes.json();
                 
                 // Check Year Match (STRICT if provided)
@@ -928,7 +980,7 @@ async function autoFillInline(sid) {
                 let criteria = [];
                 if (yearInput) criteria.push(`year ${yearInput}`);
                 if (directorInput) criteria.push(`director "${directorInput}"`);
-                alert(`No match found for "${titleVal}" with ${criteria.join(' and ')}.\n\nTMDB may not have this exact movie, or the criteria don't match their records.`);
+                showToast(`No match found for "${titleVal}" with ${criteria.join(' and ')}.\n\nTMDB may not have this exact movie, or the criteria don't match their records.`);
                 btn.textContent = originalText;
                 btn.disabled = false;
                 return;
@@ -941,7 +993,7 @@ async function autoFillInline(sid) {
             
             if (best) {
                 const type = best.media_type;
-                const detailsRes = await fetch(`https://api.themoviedb.org/3/${type}/${best.id}?api_key=${key}&append_to_response=credits,videos`);
+                const detailsRes = await fetch(getApiUrl('tmdb', `3/${type}/${best.id}?api_key=${key}&append_to_response=credits,videos`));
                 const data = await detailsRes.json();
                 
                 // Populate Inline Form - ONLY fill fields that are empty or update all
@@ -976,16 +1028,16 @@ async function autoFillInline(sid) {
 
                 const foundTitle = type === 'movie' ? data.title : data.name;
                 const foundYear = (data.release_date || data.first_air_date || "").substring(0, 4);
-                alert(`Found and filled: ${foundTitle} (${foundYear})`);
+                showToast(`Found and filled: ${foundTitle} (${foundYear})`);
             } else {
-                alert("No movies or TV shows found matching your criteria.");
+                showToast("No movies or TV shows found matching your criteria.");
             }
         } else {
-            alert("No results found on TMDB for that title.");
+            showToast("No results found on TMDB for that title.");
         }
     } catch(e) {
         console.error(e);
-        alert("Error fetching TMDB data: " + e.message);
+        showToast("Error fetching TMDB data: " + e.message);
     }
     
     btn.textContent = originalText;
@@ -1072,7 +1124,7 @@ async function saveInlineItem(id) {
     showSaveNotification(success ? `Saved: ${newItem.title}` : `Error saving: ${newItem.title}`);
 }
 
-function showSaveNotification(message) {
+function showSaveNotification(message, type = 'success') {
     // Create or reuse notification element
     let notif = document.getElementById('save-notification');
     if (!notif) {
@@ -1082,7 +1134,6 @@ function showSaveNotification(message) {
             position: fixed;
             top: 20px;
             right: 20px;
-            background: #28a745;
             color: white;
             padding: 15px 25px;
             border-radius: 8px;
@@ -1090,19 +1141,32 @@ function showSaveNotification(message) {
             z-index: 9999;
             box-shadow: 0 4px 12px rgba(0,0,0,0.3);
             transition: opacity 0.3s;
+            max-width: 400px;
+            word-wrap: break-word;
         `;
         document.body.appendChild(notif);
     }
+    
+    // Set background based on type
+    notif.style.background = type === 'error' ? '#dc3545' : type === 'warning' ? '#ffc107' : '#28a745';
+    notif.style.color = type === 'warning' ? '#000' : '#fff';
     
     notif.textContent = message;
     notif.style.opacity = '1';
     notif.style.display = 'block';
     
-    // Auto-hide after 2 seconds
-    setTimeout(() => {
+    // Auto-hide after 3 seconds (longer for errors)
+    const duration = type === 'error' ? 4000 : 2500;
+    clearTimeout(notif._hideTimeout);
+    notif._hideTimeout = setTimeout(() => {
         notif.style.opacity = '0';
         setTimeout(() => { notif.style.display = 'none'; }, 300);
-    }, 2000);
+    }, duration);
+}
+
+// Alias for convenience
+function showToast(message, type = 'success') {
+    showSaveNotification(message, type);
 }
 
 function uuidv4() {
@@ -1132,7 +1196,7 @@ function editItem(id) {
 }
 
 async function deleteItem(id) {
-    if (!confirm('Are you sure you want to delete this item?')) return;
+    if (!await showConfirm('Are you sure you want to delete this item?')) return;
     
     // Find and remove the row from DOM first
     const checkbox = document.querySelector(`.item-checkbox[value="${id}"]`);
@@ -1168,7 +1232,7 @@ async function saveItem() {
     const url = document.getElementById('url').value;
     
     if (!title || !url) {
-        alert('Title and URL are required for new items.');
+        showToast('Title and URL are required for new items.');
         return;
     }
 
@@ -1193,15 +1257,30 @@ async function saveItem() {
     };
 
     allData.push(newItem);
-    await saveDataSilent();
-    clearForm();
-    renderGenreManager();
-    showSaveNotification(`Added: ${newItem.title}`);
+    
+    try {
+        const success = await saveDataSilent();
+        if (success) {
+            clearForm();
+            renderTable();  // Re-render the table to show the new item
+            renderGenreManager();
+            showSaveNotification(`Added: ${newItem.title}`);
+        } else {
+            // Remove from local array if save failed
+            allData.pop();
+            showToast('Error saving item. Please try again.');
+        }
+    } catch (error) {
+        // Remove from local array if save failed
+        allData.pop();
+        console.error('Error in saveItem:', error);
+        showToast('Error saving item: ' + error.message);
+    }
 }
 
 async function saveData() {
     try {
-        const response = await fetch('save_data', {
+        const response = await fetch('/api/save-data', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
@@ -1211,20 +1290,20 @@ async function saveData() {
         
         if (response.ok) {
             renderTable();
-            alert('Data saved successfully!');
+            showToast('Data saved successfully!');
         } else {
-            alert('Error saving data.');
+            showToast('Error saving data.');
         }
     } catch (error) {
         console.error('Error saving:', error);
-        alert('Error saving data.');
+        showToast('Error saving data.');
     }
 }
 
 // Silent save for inline edits - no re-render, no alert
 async function saveDataSilent() {
     try {
-        const response = await fetch('save_data', {
+        const response = await fetch('/api/save-data', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'

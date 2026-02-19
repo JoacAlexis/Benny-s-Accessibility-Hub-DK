@@ -4,6 +4,9 @@ Editor Server - Serves editors in Chrome browser for proper mouse/keyboard suppo
 This server is used to launch editors (Trivia Master, Streaming, Mini Golf, etc.)
 in Chrome instead of Electron's iframe, which fixes scanning and input issues.
 
+Also provides API proxy functionality to bypass CORS restrictions when making
+external API calls (TMDB, OpenSymbols, FreeSound, etc.) from Electron.
+
 Usage:
     python editor_server.py --editor streaming
     python editor_server.py --editor triviamaster
@@ -23,7 +26,10 @@ import webbrowser
 import argparse
 import subprocess
 import time
-from urllib.parse import urlparse, parse_qs, unquote
+import urllib.request
+import urllib.error
+import ssl
+from urllib.parse import urlparse, parse_qs, unquote, urlencode
 
 # Base directory is the bennyshub folder
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -47,6 +53,20 @@ EDITORS = {
 # Chrome path
 CHROME_PATH = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
 
+# API Proxy allowed hosts - these external APIs can be proxied
+ALLOWED_API_HOSTS = {
+    'api.themoviedb.org': 'tmdb',
+    'www.opensymbols.org': 'opensymbols', 
+    'freesound.org': 'freesound',
+    'api.freesound.org': 'freesound',
+    'aged-thunder-a674.narbehousellc.workers.dev': 'freesound-proxy',
+}
+
+# Create SSL context that doesn't verify certificates (for proxy requests)
+ssl_context = ssl.create_default_context()
+ssl_context.check_hostname = False
+ssl_context.verify_mode = ssl.CERT_NONE
+
 class EditorHandler(http.server.SimpleHTTPRequestHandler):
     """Handler that serves files from bennyshub directory and handles API requests."""
     
@@ -61,6 +81,11 @@ class EditorHandler(http.server.SimpleHTTPRequestHandler):
         """Handle GET requests including API endpoints."""
         parsed = urlparse(self.path)
         path = unquote(parsed.path)
+        
+        # API Proxy: /api/proxy/<service>/<path>
+        if path.startswith('/api/proxy/'):
+            self.handle_api_proxy('GET')
+            return
         
         # API: List available editors
         if path == '/api/editors':
@@ -83,6 +108,11 @@ class EditorHandler(http.server.SimpleHTTPRequestHandler):
         """Handle POST requests for saving data."""
         parsed = urlparse(self.path)
         path = unquote(parsed.path)
+        
+        # API Proxy: /api/proxy/<service>/<path>
+        if path.startswith('/api/proxy/'):
+            self.handle_api_proxy('POST')
+            return
         
         # Handle Streaming editor save
         if path == '/api/save-data':
@@ -298,6 +328,91 @@ class EditorHandler(http.server.SimpleHTTPRequestHandler):
         """Handle CORS preflight."""
         self.send_response(200)
         self.end_headers()
+    
+    def handle_api_proxy(self, method='GET'):
+        """
+        Proxy external API requests to bypass CORS restrictions.
+        
+        URL format: /api/proxy/<service>/<api_path>?<query_params>
+        
+        Supported services:
+        - tmdb: api.themoviedb.org/3/...
+        - opensymbols: www.opensymbols.org/api/v1/...
+        - freesound: api.freesound.org/...
+        - freesound-proxy: aged-thunder-a674.narbehousellc.workers.dev/...
+        """
+        try:
+            parsed = urlparse(self.path)
+            path_parts = unquote(parsed.path).split('/')
+            
+            # Expected format: ['', 'api', 'proxy', '<service>', '<rest_of_path>...']
+            if len(path_parts) < 5:
+                self.send_json({'error': 'Invalid proxy URL format. Use /api/proxy/<service>/<path>'}, 400)
+                return
+            
+            service = path_parts[3].lower()
+            api_path = '/'.join(path_parts[4:])
+            query_string = parsed.query
+            
+            # Build the target URL based on service
+            if service == 'tmdb':
+                target_host = 'https://api.themoviedb.org'
+                target_url = f"{target_host}/{api_path}"
+            elif service == 'opensymbols':
+                target_host = 'https://www.opensymbols.org'
+                target_url = f"{target_host}/api/v1/{api_path}"
+            elif service == 'freesound':
+                target_host = 'https://api.freesound.org'
+                target_url = f"{target_host}/{api_path}"
+            elif service == 'freesound-proxy':
+                target_host = 'https://aged-thunder-a674.narbehousellc.workers.dev'
+                target_url = f"{target_host}/{api_path}"
+            else:
+                self.send_json({'error': f'Unknown service: {service}. Supported: tmdb, opensymbols, freesound, freesound-proxy'}, 400)
+                return
+            
+            # Add query string
+            if query_string:
+                target_url = f"{target_url}?{query_string}"
+            
+            self.log_message(f"Proxying {method} -> {target_url}")
+            
+            # Make the request to the external API
+            req = urllib.request.Request(target_url, method=method)
+            req.add_header('User-Agent', 'BennysHub/1.0')
+            req.add_header('Accept', 'application/json')
+            
+            # For POST requests, forward the body
+            body_data = None
+            if method == 'POST':
+                content_length = int(self.headers.get('Content-Length', 0))
+                if content_length > 0:
+                    body_data = self.rfile.read(content_length)
+                    req.add_header('Content-Type', self.headers.get('Content-Type', 'application/json'))
+            
+            try:
+                with urllib.request.urlopen(req, data=body_data, timeout=30, context=ssl_context) as response:
+                    response_data = response.read()
+                    content_type = response.headers.get('Content-Type', 'application/json')
+                    
+                    self.send_response(response.status)
+                    self.send_header('Content-Type', content_type)
+                    self.send_header('Access-Control-Allow-Origin', '*')
+                    self.end_headers()
+                    self.wfile.write(response_data)
+                    
+            except urllib.error.HTTPError as e:
+                error_body = e.read().decode('utf-8', errors='replace')
+                self.log_message(f"Proxy HTTP Error {e.code}: {error_body[:200]}")
+                self.send_json({'error': f'API returned {e.code}', 'details': error_body[:500]}, e.code)
+                
+            except urllib.error.URLError as e:
+                self.log_message(f"Proxy URL Error: {e.reason}")
+                self.send_json({'error': f'Failed to connect to API: {e.reason}'}, 502)
+                
+        except Exception as e:
+            self.log_message(f"Proxy Error: {str(e)}")
+            self.send_json({'error': str(e)}, 500)
 
 
 class ThreadingServer(socketserver.ThreadingMixIn, socketserver.TCPServer):

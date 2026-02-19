@@ -103,7 +103,14 @@
     // Launch API
     launch: {
       messenger: createBridgeMethod('launch.messenger'),
-      search: createBridgeMethod('launch.search')
+      search: createBridgeMethod('launch.search'),
+      editor: createBridgeMethod('launch.editor')
+    },
+    
+    // Editor API
+    editor: {
+      list: createBridgeMethod('editor.list'),
+      open: createBridgeMethod('editor.open')
     },
     
     // Window API

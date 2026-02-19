@@ -1,4 +1,92 @@
 
+// API Proxy helper - routes external API calls through local proxy to bypass CORS
+// Works in both Chrome (direct) and Electron (via localhost proxy)
+function getApiUrl(service, path) {
+    const isLocalhost = window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost';
+    if (isLocalhost) {
+        return `/api/proxy/${service}/${path}`;
+    }
+    const baseUrls = {
+        'tmdb': 'https://api.themoviedb.org',
+        'opensymbols': 'https://www.opensymbols.org/api/v1',
+        'freesound': 'https://api.freesound.org',
+        'freesound-proxy': 'https://aged-thunder-a674.narbehousellc.workers.dev'
+    };
+    return `${baseUrls[service]}/${path}`;
+}
+
+// Toast notification function (replaces alert to avoid focus issues)
+function showToast(message, type = 'success') {
+    let toast = document.getElementById('toast-notification');
+    if (!toast) {
+        toast = document.createElement('div');
+        toast.id = 'toast-notification';
+        toast.style.cssText = `
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 15px 25px;
+            border-radius: 8px;
+            font-weight: 600;
+            z-index: 9999;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+            transition: opacity 0.3s, transform 0.3s;
+            transform: translateY(-10px);
+            opacity: 0;
+            max-width: 400px;
+        `;
+        document.body.appendChild(toast);
+    }
+    toast.textContent = message;
+    toast.style.background = type === 'error' ? '#dc3545' : type === 'warning' ? '#ffc107' : '#28a745';
+    toast.style.color = type === 'warning' ? '#000' : '#fff';
+    toast.style.opacity = '1';
+    toast.style.transform = 'translateY(0)';
+    clearTimeout(toast._timeout);
+    toast._timeout = setTimeout(() => {
+        toast.style.opacity = '0';
+        toast.style.transform = 'translateY(-10px)';
+    }, type === 'error' ? 4000 : 2500);
+}
+
+// Non-blocking confirm dialog (replaces confirm() to avoid focus issues)
+function showConfirm(message) {
+    return new Promise((resolve) => {
+        let overlay = document.getElementById('confirm-dialog-overlay');
+        if (!overlay) {
+            overlay = document.createElement('div');
+            overlay.id = 'confirm-dialog-overlay';
+            overlay.style.cssText = `position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:10000;`;
+            overlay.innerHTML = `
+                <div style="background:#1e1e1e;border:1px solid #444;border-radius:12px;padding:25px;max-width:450px;box-shadow:0 8px 32px rgba(0,0,0,0.5);">
+                    <p id="confirm-dialog-message" style="color:#fff;font-size:16px;margin:0 0 20px 0;white-space:pre-wrap;line-height:1.5;"></p>
+                    <div style="display:flex;gap:12px;justify-content:flex-end;">
+                        <button id="confirm-dialog-cancel" style="padding:10px 20px;border:1px solid #666;background:#333;color:#fff;border-radius:6px;cursor:pointer;font-size:14px;">Cancel</button>
+                        <button id="confirm-dialog-ok" style="padding:10px 20px;border:none;background:#0d6efd;color:#fff;border-radius:6px;cursor:pointer;font-size:14px;">OK</button>
+                    </div>
+                </div>`;
+            document.body.appendChild(overlay);
+        }
+        document.getElementById('confirm-dialog-message').textContent = message;
+        overlay.style.display = 'flex';
+        const cleanup = (result) => { overlay.style.display = 'none'; resolve(result); };
+        document.getElementById('confirm-dialog-ok').onclick = () => cleanup(true);
+        document.getElementById('confirm-dialog-cancel').onclick = () => cleanup(false);
+        overlay.onclick = (e) => { if (e.target === overlay) cleanup(false); };
+    });
+}
+    toast.style.background = type === 'error' ? '#dc3545' : type === 'warning' ? '#ffc107' : '#28a745';
+    toast.style.color = type === 'warning' ? '#000' : '#fff';
+    toast.style.opacity = '1';
+    toast.style.transform = 'translateY(0)';
+    
+    clearTimeout(toast._timeout);
+    toast._timeout = setTimeout(() => {
+        toast.style.opacity = '0';
+        toast.style.transform = 'translateY(-10px)';
+    }, type === 'error' ? 4000 : 2500);
+}
+
 class JumbleEditor {
     constructor() {
         this.words = [];
@@ -237,9 +325,9 @@ class JumbleEditor {
         this.wordInput.focus();
     }
 
-    createNewList() {
+    async createNewList() {
         if (this.words.length > 0) {
-            if (!confirm("Start a new list? Unsaved changes to the current list will be lost unless you saved them.")) return;
+            if (!await showConfirm("Start a new list? Unsaved changes to the current list will be lost unless you saved them.")) return;
         }
         this.words = [];
         this.currentFileName = "untitled";
@@ -269,13 +357,13 @@ class JumbleEditor {
         }
     }
 
-    applyChanges() {
+    async applyChanges() {
         const word = this.wordInput.value.trim().toLowerCase();
         const sentence = this.sentenceInput.value.trim();
         const image = this.imageInput.value.trim();
         
-        if (!word) { alert("Word is required"); return; }
-        if (!sentence) { alert("Sentence is required"); return; }
+        if (!word) { showToast("Word is required", "warning"); return; }
+        if (!sentence) { showToast("Sentence is required", "warning"); return; }
 
         const newItem = { word, sentence, image };
         
@@ -284,7 +372,7 @@ class JumbleEditor {
             const originalWord = this.words[this.currentIndex].word;
             if (originalWord !== word) {
                 if (this.words.some(w => w.word === word)) {
-                    if (!confirm("This word already exists. Overwrite?")) return;
+                    if (!await showConfirm("This word already exists. Overwrite?")) return;
                      // Remove the other instance to avoid duplicates
                      this.words = this.words.filter(w => w.word !== word);
                      // If we removed something, indices shift, but we are about to re-sort/re-find
@@ -294,7 +382,7 @@ class JumbleEditor {
         } else {
             // New Item
              if (this.words.some(w => w.word === word)) {
-                alert("Word already exists!");
+                showToast("Word already exists!", "warning");
                 return;
             }
             this.words.push(newItem);
@@ -311,9 +399,9 @@ class JumbleEditor {
         this.showStatus("Applied. Unsaved changes.");
     }
 
-    deleteSelected() {
+    async deleteSelected() {
         if (this.selectedIndices.size === 0) return;
-        if (!confirm(`Are you sure you want to delete ${this.selectedIndices.size} word(s)?`)) return;
+        if (!await showConfirm(`Are you sure you want to delete ${this.selectedIndices.size} word(s)?`)) return;
         
         const indices = Array.from(this.selectedIndices).sort((a,b) => b-a);
         indices.forEach(idx => {
@@ -382,7 +470,7 @@ class JumbleEditor {
             
             this.showStatus(`Saved '${name}' to browser & set active!`);
         } catch (e) {
-            alert("Failed to save: " + e.message);
+            showToast("Failed to save: " + e.message, "error");
         }
     }
 
@@ -439,21 +527,21 @@ class JumbleEditor {
         this.fileNameInput.value = name;
         
         const reader = new FileReader();
-        reader.onload = (e) => {
+        reader.onload = async (e) => {
             try {
                 const data = JSON.parse(e.target.result);
                 if (Array.isArray(data)) {
-                    if (confirm("This will replace your current list. Continue?")) {
+                    if (await showConfirm("This will replace your current list. Continue?")) {
                         this.words = data;
                         this.cleanData();
                         this.filterList();
                         this.showStatus("Loaded file: " + file.name);
                     }
                 } else {
-                    alert("Invalid file format. Expected a list of words.");
+                    showToast("Invalid file format", "error");
                 }
             } catch (err) {
-                alert("Error reading file: " + err.message);
+                showToast("Error reading file: " + err.message, "error");
             }
         };
         reader.readAsText(file);
@@ -474,8 +562,8 @@ class JumbleEditor {
         container.innerHTML = "Loading...";
         
         try {
-            // Using Open Symbols API directly
-            const res = await fetch(`https://www.opensymbols.org/api/v1/symbols/search?q=${encodeURIComponent(query)}`);
+            // Using Open Symbols API via proxy
+            const res = await fetch(getApiUrl('opensymbols', `symbols/search?q=${encodeURIComponent(query)}`));
             const data = await res.json();
             
             container.innerHTML = "";

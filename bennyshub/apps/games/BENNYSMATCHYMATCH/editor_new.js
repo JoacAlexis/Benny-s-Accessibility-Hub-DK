@@ -7,6 +7,128 @@ let currentEditingCardIndex = -1;
 let currentEditingCardTitle = null;
 let currentSelectorCallback = null;
 
+// API Proxy helper - routes external API calls through local proxy to bypass CORS
+// Works in both Chrome (direct) and Electron (via localhost proxy)
+function getApiUrl(service, path) {
+    const isLocalhost = window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost';
+    if (isLocalhost) {
+        return `/api/proxy/${service}/${path}`;
+    }
+    const baseUrls = {
+        'tmdb': 'https://api.themoviedb.org',
+        'opensymbols': 'https://www.opensymbols.org/api/v1',
+        'freesound': 'https://api.freesound.org',
+        'freesound-proxy': 'https://aged-thunder-a674.narbehousellc.workers.dev'
+    };
+    return `${baseUrls[service]}/${path}`;
+}
+
+// Toast notification function (replaces alert to avoid focus issues)
+function showToast(message, type = 'success') {
+    let toast = document.getElementById('toast-notification');
+    if (!toast) {
+        toast = document.createElement('div');
+        toast.id = 'toast-notification';
+        toast.style.cssText = `
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 15px 25px;
+            border-radius: 8px;
+            font-weight: 600;
+            z-index: 9999;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+            transition: opacity 0.3s, transform 0.3s;
+            transform: translateY(-10px);
+            opacity: 0;
+            max-width: 500px;
+            white-space: pre-wrap;
+        `;
+        document.body.appendChild(toast);
+    }
+    toast.textContent = message;
+    toast.style.background = type === 'error' ? '#dc3545' : type === 'warning' ? '#ffc107' : '#28a745';
+    toast.style.color = type === 'warning' ? '#000' : '#fff';
+    toast.style.opacity = '1';
+    toast.style.transform = 'translateY(0)';
+    
+    clearTimeout(toast._timeout);
+    toast._timeout = setTimeout(() => {
+        toast.style.opacity = '0';
+        toast.style.transform = 'translateY(-10px)';
+    }, type === 'error' ? 4000 : 2500);
+}
+
+// Non-blocking confirm dialog (replaces confirm() to avoid focus issues)
+function showConfirm(message) {
+    return new Promise((resolve) => {
+        let overlay = document.getElementById('confirm-dialog-overlay');
+        if (!overlay) {
+            overlay = document.createElement('div');
+            overlay.id = 'confirm-dialog-overlay';
+            overlay.style.cssText = `
+                position: fixed;
+                top: 0; left: 0; right: 0; bottom: 0;
+                background: rgba(0,0,0,0.6);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                z-index: 10000;
+            `;
+            overlay.innerHTML = `
+                <div id="confirm-dialog-box" style="
+                    background: #1e1e1e;
+                    border: 1px solid #444;
+                    border-radius: 12px;
+                    padding: 25px;
+                    max-width: 450px;
+                    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+                ">
+                    <p id="confirm-dialog-message" style="
+                        color: #fff;
+                        font-size: 16px;
+                        margin: 0 0 20px 0;
+                        white-space: pre-wrap;
+                        line-height: 1.5;
+                    "></p>
+                    <div style="display: flex; gap: 12px; justify-content: flex-end;">
+                        <button id="confirm-dialog-cancel" style="
+                            padding: 10px 20px;
+                            border: 1px solid #666;
+                            background: #333;
+                            color: #fff;
+                            border-radius: 6px;
+                            cursor: pointer;
+                            font-size: 14px;
+                        ">Cancel</button>
+                        <button id="confirm-dialog-ok" style="
+                            padding: 10px 20px;
+                            border: none;
+                            background: #0d6efd;
+                            color: #fff;
+                            border-radius: 6px;
+                            cursor: pointer;
+                            font-size: 14px;
+                        ">OK</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(overlay);
+        }
+        document.getElementById('confirm-dialog-message').textContent = message;
+        overlay.style.display = 'flex';
+        
+        const cleanup = (result) => {
+            overlay.style.display = 'none';
+            resolve(result);
+        };
+        
+        document.getElementById('confirm-dialog-ok').onclick = () => cleanup(true);
+        document.getElementById('confirm-dialog-cancel').onclick = () => cleanup(false);
+        overlay.onclick = (e) => { if (e.target === overlay) cleanup(false); };
+    });
+}
+
 // Audio Context
 let audioContext = new (window.AudioContext || window.webkitAudioContext)();
 let audioBuffer = null;
@@ -94,7 +216,7 @@ function performAutoSave() {
     }
 }
 
-function checkForAutoSave() {
+async function checkForAutoSave() {
     try {
         const saved = localStorage.getItem(AUTOSAVE_KEY);
         if (saved) {
@@ -117,7 +239,7 @@ function checkForAutoSave() {
 
             const savedTime = new Date(data.timestamp);
             
-            if (confirm(`Unsaved work found from ${savedTime.toLocaleString()}.\n\nDo you want to restore it?`)) {
+            if (await showConfirm(`Unsaved work found from ${savedTime.toLocaleString()}.\n\nDo you want to restore it?`)) {
                 if (data.manifest && data.manifest.categories) {
                     manifest = data.manifest;
                     console.log("Restored from auto-save");
@@ -306,7 +428,7 @@ function renderProjectList() {
              // Load it
              // If we are serverless, we might not be able to fetch simple paths if they are not in cache
              // But let's try standard loadPack
-             const confirmed = confirm(`Load matching pack "${item.innerText}"? Unsaved changes will be lost.`);
+             const confirmed = await showConfirm(`Load matching pack "${item.innerText}"? Unsaved changes will be lost.`);
              if (confirmed) {
                  await loadPack(pack);
                  document.getElementById('project-list-dropdown').style.display = 'none';
@@ -342,7 +464,7 @@ async function createNewPack(name, silent=false) {
     const existingIdx = packList.findIndex(p => getFilename(p) === filename);
     
     if (existingIdx !== -1) {
-        if (!silent) alert("Matching Pack already exists!");
+        if (!silent) showToast("Matching Pack already exists!");
         await loadPack(packList[existingIdx]);
         return;
     }
@@ -376,7 +498,7 @@ async function createNewPack(name, silent=false) {
     // Save empty pack file
     await saveManifest(true); 
     
-    if (!silent) alert(`Created new matching pack: ${name}`);
+    if (!silent) showToast(`Created new matching pack: ${name}`);
     renderCategories();
 }
 
@@ -395,7 +517,7 @@ async function saveRegistry() {
 async function refreshAssets() {
     await loadAssetPool();
     autoMatchSounds();
-    alert("Assets refreshed and auto-matched!");
+    showToast("Assets refreshed and auto-matched!");
 }
 
 async function loadAssetPool() {
@@ -451,7 +573,7 @@ function handleManualScan(input) {
         console.log("Manual scan files:", files.length);
         
         if (files.length === 0) {
-            alert("No files selected.");
+            showToast("No files selected.");
             return;
         }
 
@@ -499,7 +621,7 @@ function handleManualScan(input) {
         
     } catch (e) {
         console.error("Error in handleManualScan:", e);
-        alert("An error occurred while scanning assets: " + e.message);
+        showToast("An error occurred while scanning assets: " + e.message);
     }
 }
 
@@ -671,9 +793,9 @@ function renderCategories() {
             clearBtn.style.padding = '2px 6px';
             clearBtn.style.fontSize = '10px';
             clearBtn.title = "Remove all items from Unassigned";
-            clearBtn.onclick = (e) => {
+            clearBtn.onclick = async (e) => {
                 e.stopPropagation();
-                if (confirm("Clear all items from Unassigned?")) {
+                if (await showConfirm("Clear all items from Unassigned?")) {
                     manifest.categories['Unassigned'] = [];
                     renderCategories();
                     if (currentCategory === 'Unassigned') renderCards();
@@ -749,7 +871,7 @@ function createCategory() {
     const name = document.getElementById('new-cat-name').value.trim();
     if (!name) return;
     if (manifest.categories[name]) {
-        alert("Category already exists");
+        showToast("Category already exists");
         return;
     }
     manifest.categories[name] = [];
@@ -758,8 +880,8 @@ function createCategory() {
     selectCategory(name);
 }
 
-function deleteCategory(name) {
-    if (!confirm(`Delete category "${name}"? Assets will be moved to Unassigned.`)) return;
+async function deleteCategory(name) {
+    if (!await showConfirm(`Delete category "${name}"? Assets will be moved to Unassigned.`)) return;
     
     // Move items to Unassigned
     const items = manifest.categories[name] || [];
@@ -797,8 +919,8 @@ function reorderCategory(draggedCat, targetCat) {
     saveToBrowser(); // Ensures order is saved locally immediately
 }
 
-function sortCategoriesAZ() {
-    if (!confirm("Sort all categories alphabetically? This will change the display order in the game.")) return;
+async function sortCategoriesAZ() {
+    if (!await showConfirm("Sort all categories alphabetically? This will change the display order in the game.")) return;
     
     const keys = Object.keys(manifest.categories).sort((a,b) => {
         // Always put 'Unassigned' at the bottom
@@ -895,23 +1017,23 @@ function updateSelectionUI() {
 function moveSelectedCards() {
     const targetCat = document.getElementById('move-target-cat').value;
     if (!targetCat) {
-        alert("Please select a target category.");
+        showToast("Please select a target category.");
         return;
     }
     
     if (selectedCards.size === 0) {
-        alert("No cards selected.");
+        showToast("No cards selected.");
         return;
     }
     
     const indices = Array.from(selectedCards);
     moveCards(currentCategory, targetCat, indices);
-    alert(`Moved ${indices.length} cards to ${targetCat}.`);
+    showToast(`Moved ${indices.length} cards to ${targetCat}.`);
 }
 
-function deleteSelectedCards() {
+async function deleteSelectedCards() {
     if (selectedCards.size === 0) return;
-    if (!confirm(`Delete ${selectedCards.size} selected cards?`)) return;
+    if (!await showConfirm(`Delete ${selectedCards.size} selected cards?`)) return;
     
     const cards = manifest.categories[currentCategory];
     const indices = Array.from(selectedCards).sort((a, b) => b - a);
@@ -1167,7 +1289,7 @@ function renderCards() {
             editImgBtn.style.fontSize = '10px';
             editImgBtn.onclick = () => {
                 if (!card.title || card.title.trim() === '') {
-                    alert("Please enter a Main Title for this card before editing the image.");
+                    showToast("Please enter a Main Title for this card before editing the image.");
                     return;
                 }
                 editingCardCallback = (newFilename) => updateCard(index, 'image', newFilename);
@@ -1549,24 +1671,24 @@ function importManifestFile() {
                 
                 // CHECK IF IT IS A MANIFEST (Registry)
                 if (data && data.packs && Array.isArray(data.packs)) {
-                    if (confirm(`This file appears to be a Game Registry with ${data.packs.length} matching packs.\nDo you want to import this pack list?`)) {
-                        
-                        // Merge with existing pack list
-                        let count = 0;
-                        data.packs.forEach(p => {
-                            if (!packList.includes(p)) {
-                                packList.push(p);
-                                count++;
-                            }
-                        });
-                        
-                        // Save to local registry so it persists
-                        localStorage.setItem('matchy_local_registry', JSON.stringify(packList));
-                        
-                        alert(`Imported ${count} new matching packs to your list!\nClick the folder icon 📁 next to the Matching Pack Name to switch between them.`);
-                        return; // Done
-                    }
-                    return; // Cancelled
+                    showConfirm(`This file appears to be a Game Registry with ${data.packs.length} matching packs.\nDo you want to import this pack list?`).then(confirmed => {
+                        if (confirmed) {
+                            // Merge with existing pack list
+                            let count = 0;
+                            data.packs.forEach(p => {
+                                if (!packList.includes(p)) {
+                                    packList.push(p);
+                                    count++;
+                                }
+                            });
+                            
+                            // Save to local registry so it persists
+                            localStorage.setItem('matchy_local_registry', JSON.stringify(packList));
+                            
+                            showToast(`Imported ${count} new matching packs to your list!\nClick the folder icon 📁 next to the Matching Pack Name to switch between them.`);
+                        }
+                    });
+                    return; // Done (async)
                 }
 
                 // Determine if valid manifest or raw category map
@@ -1583,104 +1705,105 @@ function importManifestFile() {
 
                 if (newCategories) {
                     // Always replace logic as per user request
-                    if (confirm("This will REPLACE all current categories with the data from the imported file. Any unsaved changes will be lost. Continue?")) {
-                         manifest.categories = newCategories;
+                    showConfirm("This will REPLACE all current categories with the data from the imported file. Any unsaved changes will be lost. Continue?").then(async confirmed => {
+                        if (!confirmed) {
+                            return; // User cancelled
+                        }
+                        
+                        manifest.categories = newCategories;
                          
-                         // Update Filename and Title based on imported file
-                         const rawName = file.name.replace('.json', '');
-                         let cleanName = rawName.trim().toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
-                         cleanName = cleanName.replace(/^packs?_/, ''); // Remove 'packs_' prefix
+                        // Update Filename and Title based on imported file
+                        const rawName = file.name.replace('.json', '');
+                        let cleanName = rawName.trim().toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
+                        cleanName = cleanName.replace(/^packs?_/, ''); // Remove 'packs_' prefix
                          
-                         currentPackFilename = 'packs/' + cleanName + '.json';
+                        currentPackFilename = 'packs/' + cleanName + '.json';
                          
-                         // Update UI
-                         const displayTitle = rawName.replace(/^packs?_/, '').replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-                         const titleInput = document.getElementById('pack-title-input');
-                         if (titleInput) titleInput.value = displayTitle;
+                        // Update UI
+                        const displayTitle = rawName.replace(/^packs?_/, '').replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                        const titleInput = document.getElementById('pack-title-input');
+                        if (titleInput) titleInput.value = displayTitle;
                          
-                         const srcIndicator = document.getElementById('save-status');
-                         if (srcIndicator) srcIndicator.innerText = `Matching Pack: ${displayTitle}`;
+                        const srcIndicator = document.getElementById('save-status');
+                        if (srcIndicator) srcIndicator.innerText = `Matching Pack: ${displayTitle}`;
                          
-                         // Ensure it's in the pack list if not already
-                         if (!packList.includes(currentPackFilename)) {
-                             packList.push(currentPackFilename);
-                         }
-                    } else {
-                        return; // User cancelled
-                    }
+                        // Ensure it's in the pack list if not already
+                        if (!packList.includes(currentPackFilename)) {
+                            packList.push(currentPackFilename);
+                        }
                     
-                    // Ensure Unassigned exists
-                    if (!manifest.categories['Unassigned']) {
-                        manifest.categories['Unassigned'] = [];
-                    }
+                        // Ensure Unassigned exists
+                        if (!manifest.categories['Unassigned']) {
+                            manifest.categories['Unassigned'] = [];
+                        }
 
-                    // Scan imported manifest for assets and add to pool
-                    const poolSet = new Set(assetPool);
-                    let addedCount = 0;
-                    Object.values(manifest.categories).forEach(cat => {
-                        cat.forEach(card => {
-                            if (card.image && !card.image.startsWith('data:') && !card.image.startsWith('http')) {
-                                if (!poolSet.has(card.image)) {
-                                    poolSet.add(card.image);
-                                    addedCount++;
-                                }
-                            }
-                            if (card.sound) {
-                                const sounds = Array.isArray(card.sound) ? card.sound : [card.sound];
-                                sounds.forEach(s => {
-                                    if (s && !s.startsWith('data:') && !s.startsWith('http')) {
-                                        if (!poolSet.has(s)) {
-                                            poolSet.add(s);
-                                            addedCount++;
-                                        }
+                        // Scan imported manifest for assets and add to pool
+                        const poolSet = new Set(assetPool);
+                        let addedCount = 0;
+                        Object.values(manifest.categories).forEach(cat => {
+                            cat.forEach(card => {
+                                if (card.image && !card.image.startsWith('data:') && !card.image.startsWith('http')) {
+                                    if (!poolSet.has(card.image)) {
+                                        poolSet.add(card.image);
+                                        addedCount++;
                                     }
-                                });
-                            }
-                        });
-                    });
-                    
-                    if (addedCount > 0) {
-                        assetPool = Array.from(poolSet);
-                        console.log(`Added ${addedCount} assets from imported JSON to pool.`);
-                    }
-
-                    // Reset Editor State and View - Force Refresh
-                    currentCategory = null;
-                    currentEditingCardIndex = -1;
-                    
-                    // Clear list explicitly before render
-                    document.getElementById('category-list').innerHTML = '';
-
-                    // Select first available category to refresh page view
-                    const cats = Object.keys(manifest.categories);
-                    const first = cats.find(c => c !== 'Unassigned') || 'Unassigned';
-                    selectCategory(first);
-
-                    alert("Manifest imported successfully!");
-                    localStorage.setItem('matchy_manifest', JSON.stringify(manifest));
-                    localStorage.setItem('matchy_last_pack', currentPackFilename);
-                    
-                    // Offer to link asset folder for persistent access
-                    if (window.showDirectoryPicker) {
-                        setTimeout(async () => {
-                            if (confirm("Would you like to link an asset folder?\n\nThis will give the editor persistent access to your images and sounds, so you won't need to re-import them each time.")) {
-                                const handle = await requestFolderAccess();
-                                if (handle) {
-                                    await loadAssetsFromFolderHandle(handle, false);
-                                    autoMatchSounds();
-                                    if (currentCategory) renderCards();
-                                    alert("Asset folder linked successfully! The editor will remember this folder.");
                                 }
-                            }
-                        }, 100);
-                    }
+                                if (card.sound) {
+                                    const sounds = Array.isArray(card.sound) ? card.sound : [card.sound];
+                                    sounds.forEach(s => {
+                                        if (s && !s.startsWith('data:') && !s.startsWith('http')) {
+                                            if (!poolSet.has(s)) {
+                                                poolSet.add(s);
+                                                addedCount++;
+                                            }
+                                        }
+                                    });
+                                }
+                            });
+                        });
+                    
+                        if (addedCount > 0) {
+                            assetPool = Array.from(poolSet);
+                            console.log(`Added ${addedCount} assets from imported JSON to pool.`);
+                        }
 
+                        // Reset Editor State and View - Force Refresh
+                        currentCategory = null;
+                        currentEditingCardIndex = -1;
+                    
+                        // Clear list explicitly before render
+                        document.getElementById('category-list').innerHTML = '';
+
+                        // Select first available category to refresh page view
+                        const cats = Object.keys(manifest.categories);
+                        const first = cats.find(c => c !== 'Unassigned') || 'Unassigned';
+                        selectCategory(first);
+
+                        showToast("Manifest imported successfully!");
+                        localStorage.setItem('matchy_manifest', JSON.stringify(manifest));
+                        localStorage.setItem('matchy_last_pack', currentPackFilename);
+                    
+                        // Offer to link asset folder for persistent access
+                        if (window.showDirectoryPicker) {
+                            setTimeout(async () => {
+                                if (await showConfirm("Would you like to link an asset folder?\n\nThis will give the editor persistent access to your images and sounds, so you won't need to re-import them each time.")) {
+                                    const handle = await requestFolderAccess();
+                                    if (handle) {
+                                        await loadAssetsFromFolderHandle(handle, false);
+                                        autoMatchSounds();
+                                        if (currentCategory) renderCards();
+                                        showToast("Asset folder linked successfully! The editor will remember this folder.");
+                                    }
+                                }
+                            }, 100);
+                        }
+                    });
                 } else {
-                    alert("Invalid JSON format: Could not find 'categories' object or valid category map.");
+                    showToast("Invalid JSON format: Could not find 'categories' object or valid category map.");
                 }
             } catch (err) {
                 console.error(err);
-                alert("Failed to parse JSON file: " + err.message);
+                showToast("Failed to parse JSON file: " + err.message);
             }
         };
         reader.readAsText(file);
@@ -1694,7 +1817,7 @@ async function saveManifest(silent = false) {
     
     // If we are unsaved (null filename) and have no title, ask for one
     if (!currentPackFilename && (!titleInput || !titleInput.value)) {
-        alert("Please enter a Matching Pack Name before saving.");
+        showToast("Please enter a Matching Pack Name before saving.");
         return;
     }
 
@@ -1763,7 +1886,7 @@ async function saveManifest(silent = false) {
 
     // Protect the registry file from being overwritten with pack data
     if (targetFile === 'assetManifest.json') {
-        if (!confirm("Warning: You are about to overwrite the Game Registry (assetManifest.json) with pack data. This might break the game pack list. Continue?")) {
+        if (!await showConfirm("Warning: You are about to overwrite the Game Registry (assetManifest.json) with pack data. This might break the game pack list. Continue?")) {
             return;
         }
     }
@@ -1775,7 +1898,7 @@ async function saveManifest(silent = false) {
             body: JSON.stringify(manifest, null, 4)
         });
         if (res.ok) {
-            if (!silent) alert(`Saved "${targetFile}" successfully!`);
+            if (!silent) showToast(`Saved "${targetFile}" successfully!`);
             saveToBrowser(); 
             
             // Ensure proper sync with assetManifest
@@ -1827,7 +1950,7 @@ async function downloadManifest() {
             const writable = await handle.createWritable();
             await writable.write(jsonString);
             await writable.close();
-            alert("Manifest saved successfully!");
+            showToast("Manifest saved successfully!");
             return;
         } catch (err) {
             if (err.name === 'AbortError') return; // User cancelled
@@ -1842,7 +1965,7 @@ async function downloadManifest() {
     document.body.appendChild(downloadAnchorNode);
     downloadAnchorNode.click();
     downloadAnchorNode.remove();
-    alert("Manifest downloaded! Please save it as 'assetManifest.json' in your main game folder.");
+    showToast("Manifest downloaded! Please save it as 'assetManifest.json' in your main game folder.");
 }
 
 // --- Asset Manager ---
@@ -2170,13 +2293,13 @@ function updateAssetManagerUI() {
 }
 
 async function deleteAsset(filename) {
-    if (!confirm(`Delete "${filename}"?`)) return;
+    if (!await showConfirm(`Delete "${filename}"?`)) return;
     performDelete(filename);
 }
 
 async function deleteSelectedAssets() {
     if (assetManagerSelection.size === 0) return;
-    if (!confirm(`Delete ${assetManagerSelection.size} assets?`)) return;
+    if (!await showConfirm(`Delete ${assetManagerSelection.size} assets?`)) return;
     
     assetManagerSelection.forEach(filename => {
        performDelete(filename, true);
@@ -2277,7 +2400,7 @@ function filterAssets(type) {
 }
 
 async function resetAssetList() {
-    if (!confirm("This will clear the current list of loaded assets (images/sounds) from the browser cache. It will NOT delete files from the server or your computer.\n\nContinue?")) return;
+    if (!await showConfirm("This will clear the current list of loaded assets (images/sounds) from the browser cache. It will NOT delete files from the server or your computer.\n\nContinue?")) return;
     
     // 1. Clear In-Memory Data
     assetPool = [];
@@ -2302,7 +2425,7 @@ async function resetAssetList() {
     // If they want server files back, they can refresh the page.
     
     filterAssets('all');
-    alert("Asset list cleared!");
+    showToast("Asset list cleared!");
 }
 
 async function uploadAssets() {
@@ -2331,7 +2454,7 @@ async function uploadAssets() {
     await loadAssetPool();
     
     if (assetPool.length === 0) {
-        alert("Warning: No assets found on server after upload. Please check server logs.");
+        showToast("Warning: No assets found on server after upload. Please check server logs.");
         return;
     }
     
@@ -2341,7 +2464,7 @@ async function uploadAssets() {
     syncAssets(true);
     saveToBrowser();
     
-    alert("Upload complete! Assets have been added to Unassigned.");
+    showToast("Upload complete! Assets have been added to Unassigned.");
 }
 
 function syncAssets(silent = false) {
@@ -2471,10 +2594,10 @@ function syncAssets(silent = false) {
 
     if (!silent) {
         if (addedCount > 0) {
-            alert(`Auto-populated ${addedCount} new cards into Unassigned category.`);
+            showToast(`Auto-populated ${addedCount} new cards into Unassigned category.`);
         } else {
             if (images.length === 0) {
-                alert("No images found in assets folder to populate.");
+                showToast("No images found in assets folder to populate.");
             } else {
                 // Detailed report
                 const unassignedCount = manifest.categories['Unassigned'] ? manifest.categories['Unassigned'].length : 0;
@@ -2489,7 +2612,7 @@ function syncAssets(silent = false) {
                     msg += `\n\nIt seems all images in the pool are already assigned to a card.`;
                 }
                 
-                alert(msg);
+                showToast(msg);
             }
         }
     }
@@ -2585,17 +2708,17 @@ function openPhotoEditor(imagePath, cardTitle = null) {
                     loadImageToCanvas(blobImage);
                 };
                 blobImage.onerror = () => {
-                    alert("Could not load this image for editing. The image server may not allow cross-origin access.");
+                    showToast("Could not load this image for editing. The image server may not allow cross-origin access.");
                     closeModal('photo-editor-modal');
                 };
                 blobImage.src = blobUrl;
             } catch (e) {
                 console.error("Failed to fetch image:", e);
-                alert("Could not load this image for editing. The image server may not allow cross-origin access.\n\nTip: Download the image and import it locally.");
+                showToast("Could not load this image for editing. The image server may not allow cross-origin access.\n\nTip: Download the image and import it locally.");
                 closeModal('photo-editor-modal');
             }
         } else {
-            alert("Could not load image for editing.");
+            showToast("Could not load image for editing.");
             closeModal('photo-editor-modal');
         }
     };
@@ -3287,7 +3410,7 @@ async function openAudioEditor(audioPath, cardTitle = null) {
         loadAudioBuffer(arrayBuffer);
     } catch (e) {
         console.error("Failed to load audio for editing", e);
-        alert("Could not load audio file.");
+        showToast("Could not load audio file.");
         closeModal('audio-editor-modal');
     }
 }
@@ -3324,7 +3447,7 @@ async function loadAudioBuffer(arrayBuffer) {
     audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
     
     if (audioBuffer.duration > 10) {
-        alert("Suggestion: Keep audio under 10 seconds for best experience.");
+        showToast("Suggestion: Keep audio under 10 seconds for best experience.");
     }
     
     document.getElementById('audio-start').value = 0;
@@ -3381,7 +3504,7 @@ async function startRecording(source) {
             // Check if user actually shared audio
             const audioTrack = stream.getAudioTracks()[0];
             if (!audioTrack) {
-                alert("No system audio detected. Make sure to check 'Share Audio' in the dialog.");
+                showToast("No system audio detected. Make sure to check 'Share Audio' in the dialog.");
                 stream.getTracks().forEach(t => t.stop());
                 return;
             }
@@ -3417,7 +3540,7 @@ async function startRecording(source) {
         
     } catch (err) {
         console.error("Error starting recording:", err);
-        alert("Could not start recording: " + err.message);
+        showToast("Could not start recording: " + err.message);
     }
 }
 
@@ -3651,7 +3774,7 @@ async function saveEditedAudio() {
     let end = parseFloat(document.getElementById('audio-end').value);
     
     if (end <= start) {
-        alert("End time must be greater than start time");
+        showToast("End time must be greater than start time");
         return;
     }
     
@@ -3663,7 +3786,7 @@ async function saveEditedAudio() {
     const frameCount = Math.floor((end - start) * sampleRate);
     
     if (frameCount <= 0) {
-        alert("Selection too short");
+        showToast("Selection too short");
         return;
     }
 
@@ -3922,7 +4045,7 @@ function saveToBrowser() {
         localStorage.removeItem(AUTOSAVE_KEY);
     } catch (e) {
         console.error("Failed to save to browser", e);
-        alert("Failed to save to browser storage. Storage might be full.");
+        showToast("Failed to save to browser storage. Storage might be full.");
     }
 }
 
@@ -3965,7 +4088,7 @@ function clearBrowserData() {
 }
 
 async function resetLocalStorage() {
-    if (confirm("FACTORY RESET: This will delete ALL locally saved games, settings, and registries from this browser.\n\nAre you sure you want to completely wipe all local data?")) {
+    if (await showConfirm("FACTORY RESET: This will delete ALL locally saved games, settings, and registries from this browser.\n\nAre you sure you want to completely wipe all local data?")) {
         const keysToRemove = [];
         for (let i = 0; i < localStorage.length; i++) {
             const key = localStorage.key(i);
@@ -3982,7 +4105,7 @@ async function resetLocalStorage() {
         await clearFolderHandleFromDB();
         persistentFolderHandle = null;
         
-        alert("Local storage cleared. Reloading...");
+        showToast("Local storage cleared. Reloading...");
         window.location.reload();
     }
 }
@@ -4040,8 +4163,8 @@ async function searchSymbols() {
     container.innerHTML = '<div style="text-align:center; padding:20px; background-color:#fff;">Searching...</div>';
     
     try {
-        // Using Open Symbols API
-        const res = await fetch(`https://www.opensymbols.org/api/v1/symbols/search?q=${encodeURIComponent(query)}`);
+        // Using Open Symbols API via proxy
+        const res = await fetch(getApiUrl('opensymbols', `symbols/search?q=${encodeURIComponent(query)}`));
         const data = await res.json();
         
         container.innerHTML = '';
@@ -4105,22 +4228,36 @@ async function searchSounds() {
 
     container.innerHTML = '<div style="text-align:center; padding:20px; background-color:#fff;">Searching FreeSound...</div>';
 
-    // Using worker proxy
-    const base = "https://aged-thunder-a674.narbehousellc.workers.dev";
-    const u = new URL(`${base}/api/search`);
+    // Using local proxy or worker proxy depending on environment
+    const isLocalhost = window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost';
+    let searchUrl;
     
-    // We send both 'query' (FreeSound standard) and 'q' to ensure the worker picks it up
-    u.searchParams.set("query", query);
-    u.searchParams.set("q", query);
-    
-    u.searchParams.set("page_size", "15");
-    u.searchParams.set("fields", "id,name,duration,previews,images");
-    u.searchParams.set("_", Date.now()); // Prevent caching
+    if (isLocalhost) {
+        // Use local proxy to bypass CORS in Electron
+        const params = new URLSearchParams({
+            query: query,
+            q: query,
+            page_size: "15",
+            fields: "id,name,duration,previews,images",
+            _: Date.now()
+        });
+        searchUrl = `/api/proxy/freesound-proxy/api/search?${params.toString()}`;
+    } else {
+        // Direct worker proxy for external access
+        const base = "https://aged-thunder-a674.narbehousellc.workers.dev";
+        const u = new URL(`${base}/api/search`);
+        u.searchParams.set("query", query);
+        u.searchParams.set("q", query);
+        u.searchParams.set("page_size", "15");
+        u.searchParams.set("fields", "id,name,duration,previews,images");
+        u.searchParams.set("_", Date.now());
+        searchUrl = u.toString();
+    }
 
-    console.log("Searching FreeSound:", u.toString());
+    console.log("Searching FreeSound:", searchUrl);
 
     try {
-        const res = await fetch(u.toString());
+        const res = await fetch(searchUrl);
         const data = await res.json();
         
         container.innerHTML = '';
@@ -4216,7 +4353,7 @@ async function searchSounds() {
                     btn.innerText = "Error";
                     btn.disabled = false;
                     console.error("Download failed:", e);
-                    alert("Error downloading sound. It might be a CORS issue with FreeSound previews.");
+                    showToast("Error downloading sound. It might be a CORS issue with FreeSound previews.");
                 }
             };
             
@@ -4395,7 +4532,7 @@ async function restorePersistentFolderHandle() {
 
 async function requestFolderAccess() {
     if (!window.showDirectoryPicker) {
-        alert("Your browser doesn't support persistent folder access. Assets will need to be re-imported each session.");
+        showToast("Your browser doesn't support persistent folder access. Assets will need to be re-imported each session.");
         return null;
     }
     
@@ -4430,7 +4567,7 @@ async function loadAssetsFromFolderHandle(handle, silent = false) {
         if (permission !== 'granted') {
             permission = await handle.requestPermission({ mode: 'read' });
             if (permission !== 'granted') {
-                if (!silent) alert("Permission to access the folder was denied.");
+                if (!silent) showToast("Permission to access the folder was denied.");
                 return false;
             }
         }
@@ -4458,7 +4595,7 @@ async function loadAssetsFromFolderHandle(handle, silent = false) {
         await readDirectory(handle);
         
         if (files.length === 0) {
-            if (!silent) alert("No supported image or audio files found in the selected folder.");
+            if (!silent) showToast("No supported image or audio files found in the selected folder.");
             return false;
         }
         
@@ -4503,7 +4640,7 @@ async function loadAssetsFromFolderHandle(handle, silent = false) {
         return true;
     } catch (e) {
         console.error("Error loading assets from folder handle:", e);
-        if (!silent) alert("Error loading assets: " + e.message);
+        if (!silent) showToast("Error loading assets: " + e.message);
         return false;
     }
 }
@@ -4616,7 +4753,7 @@ async function saveScannedRegistry() {
             const writable = await handle.createWritable();
             await writable.write(pendingRegistryJSON);
             await writable.close();
-            alert(`Registry updated with ${pendingPackCount} packs!`);
+            showToast(`Registry updated with ${pendingPackCount} packs!`);
             
             // Success - Reset UI
             pendingRegistryJSON = null;
@@ -4632,13 +4769,13 @@ async function saveScannedRegistry() {
              // If user simply cancelled, we do nothing. 
              // If actual error, we might want to alert?
              if (err.name !== 'AbortError') {
-                 alert("Error opening File Picker: " + err.message + "\n\nFalling back to standard download.");
+                 showToast("Error opening File Picker: " + err.message + "\n\nFalling back to standard download.");
              } else {
                  return; // Just return if cancelled to let them try again
              }
         }
     } else {
-        alert("Your browser does not support the 'Save As' dialog for this action.\nIt will attempt to download to your default folder.");
+        showToast("Your browser does not support the 'Save As' dialog for this action.\nIt will attempt to download to your default folder.");
     }
 
     // Fallback to Download Link
@@ -4650,7 +4787,7 @@ async function saveScannedRegistry() {
     downloadAnchorNode.click();
     downloadAnchorNode.remove();
     
-    alert(`Registry downloaded with ${pendingPackCount} packs!\n\nPlease move 'assetManifest.json' to your main game folder if it didn't save there.`);
+    showToast(`Registry downloaded with ${pendingPackCount} packs!\n\nPlease move 'assetManifest.json' to your main game folder if it didn't save there.`);
     
     // Reset UI
     pendingRegistryJSON = null;
@@ -4680,7 +4817,7 @@ function updateGameRegistry() {
         const jsonFiles = files.filter(f => f.name.endsWith('.json') && !f.name.startsWith('.'));
         
         if (jsonFiles.length === 0) {
-            alert("No JSON files found in the selected folder.");
+            showToast("No JSON files found in the selected folder.");
             return;
         }
 
@@ -4704,10 +4841,10 @@ function updateGameRegistry() {
             btn.style.backgroundColor = "#4CAF50"; // Green
         }
         
-        alert(`Scan Complete! Found ${packList.length} packs.\n\nClick the green 'Save assetManifest.json' button to choose where to save it.`);
+        showToast(`Scan Complete! Found ${packList.length} packs.\n\nClick the green 'Save assetManifest.json' button to choose where to save it.`);
     };
     
-    alert("Step 1: Select your 'packs' folder to scan.");
+    showToast("Step 1: Select your 'packs' folder to scan.");
     input.click();
 }
 
@@ -4728,7 +4865,7 @@ async function linkAssetFolder() {
 }
 
 async function unlinkAssetFolder() {
-    if (confirm("Unlink the asset folder? You will need to re-import assets manually.")) {
+    if (await showConfirm("Unlink the asset folder? You will need to re-import assets manually.")) {
         persistentFolderHandle = null;
         await clearFolderHandleFromDB();
         updateFolderUI();

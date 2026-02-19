@@ -1,3 +1,90 @@
+// Toast notification function (replaces alert for better UX)
+function showToast(message, type = 'success') {
+    let toast = document.getElementById('editor-toast');
+    if (!toast) {
+        toast = document.createElement('div');
+        toast.id = 'editor-toast';
+        toast.style.cssText = `position:fixed;top:20px;right:20px;padding:15px 25px;border-radius:8px;color:white;font-weight:bold;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,0.3);transition:opacity 0.3s;`;
+        document.body.appendChild(toast);
+    }
+    toast.style.background = type === 'error' ? '#dc3545' : type === 'warning' ? '#ffc107' : '#28a745';
+    toast.style.color = type === 'warning' ? '#000' : '#fff';
+    toast.textContent = message;
+    toast.style.opacity = '1';
+    toast.style.display = 'block';
+    setTimeout(() => { toast.style.opacity = '0'; setTimeout(() => { toast.style.display = 'none'; }, 300); }, 3000);
+}
+
+// Non-blocking confirm dialog (replaces confirm() to avoid focus issues)
+function showConfirm(message) {
+    return new Promise((resolve) => {
+        let overlay = document.getElementById('confirm-dialog-overlay');
+        if (!overlay) {
+            overlay = document.createElement('div');
+            overlay.id = 'confirm-dialog-overlay';
+            overlay.style.cssText = `
+                position: fixed;
+                top: 0; left: 0; right: 0; bottom: 0;
+                background: rgba(0,0,0,0.6);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                z-index: 10000;
+            `;
+            overlay.innerHTML = `
+                <div id="confirm-dialog-box" style="
+                    background: #1e1e1e;
+                    border: 1px solid #444;
+                    border-radius: 12px;
+                    padding: 25px;
+                    max-width: 450px;
+                    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+                ">
+                    <p id="confirm-dialog-message" style="
+                        color: #fff;
+                        font-size: 16px;
+                        margin: 0 0 20px 0;
+                        white-space: pre-wrap;
+                        line-height: 1.5;
+                    "></p>
+                    <div style="display: flex; gap: 12px; justify-content: flex-end;">
+                        <button id="confirm-dialog-cancel" style="
+                            padding: 10px 20px;
+                            border: 1px solid #666;
+                            background: #333;
+                            color: #fff;
+                            border-radius: 6px;
+                            cursor: pointer;
+                            font-size: 14px;
+                        ">Cancel</button>
+                        <button id="confirm-dialog-ok" style="
+                            padding: 10px 20px;
+                            border: none;
+                            background: #0d6efd;
+                            color: #fff;
+                            border-radius: 6px;
+                            cursor: pointer;
+                            font-size: 14px;
+                        ">OK</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(overlay);
+        }
+        document.getElementById('confirm-dialog-message').textContent = message;
+        overlay.style.display = 'flex';
+        
+        const cleanup = (result) => {
+            overlay.style.display = 'none';
+            resolve(result);
+        };
+        
+        document.getElementById('confirm-dialog-ok').onclick = () => cleanup(true);
+        document.getElementById('confirm-dialog-cancel').onclick = () => cleanup(false);
+        overlay.onclick = (e) => { if (e.target === overlay) cleanup(false); };
+    });
+}
+
 // State
 let triviaData = {};
 let gameMeta = { title: "My Custom Trivia", image: "" };
@@ -90,11 +177,11 @@ document.addEventListener('DOMContentLoaded', () => {
             })
             .catch(err => console.error("Could not load games manifest", err));
 
-        gameDropdown.addEventListener('change', (e) => {
+        gameDropdown.addEventListener('change', async (e) => {
             const gamePath = e.target.value;
             if (!gamePath) return;
 
-            if (!confirm('Load "' + e.target.options[e.target.selectedIndex].text + '"? Unsaved changes will be lost.')) {
+            if (!await showConfirm('Load "' + e.target.options[e.target.selectedIndex].text + '"? Unsaved changes will be lost.')) {
                 e.target.value = ""; 
                 return;
             }
@@ -121,7 +208,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     render();
                 })
                 .catch(err => {
-                    alert("Error loading game: " + err);
+                    showToast("Error loading game: " + err);
                     e.target.value = "";
                 });
         });
@@ -129,8 +216,8 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // Event Listeners
-btnNew.addEventListener('click', () => {
-    if (confirm('Are you sure? Unsaved changes will be lost.')) {
+btnNew.addEventListener('click', async () => {
+    if (await showConfirm('Are you sure? Unsaved changes will be lost.')) {
         triviaData = { "New Category": { questions: [], image: "" } };
         gameMeta = { title: "My Custom Trivia", image: "" };
         render();
@@ -141,8 +228,8 @@ btnSave.addEventListener('click', saveJSON);
 
 // Manifest Update Logic
 if (btnUpdateManifest) {
-    btnUpdateManifest.addEventListener('click', () => {
-        if (confirm("Select ALL the game JSON files (including existing ones) you want to be in the game list. This will generate a new games_manifest.json.")) {
+    btnUpdateManifest.addEventListener('click', async () => {
+        if (await showConfirm("Select ALL the game JSON files (including existing ones) you want to be in the game list. This will generate a new games_manifest.json.")) {
             manifestFilesInput.click();
         }
     });
@@ -191,11 +278,11 @@ fileInput.addEventListener('change', (e) => {
             if (success) {
                 render();
             } else {
-                alert('Failed to parse file. Please ensure it is a valid JSON file.');
+                showToast('Failed to parse file. Please ensure it is a valid JSON file.');
             }
         } catch (err) {
             console.error("General Error", err);
-            alert('An error occurred while loading the file: ' + err.message);
+            showToast('An error occurred while loading the file: ' + err.message);
         } finally {
             fileInput.value = ''; // Allow reloading the same file
         }
@@ -259,7 +346,7 @@ btnSubmitQuestion.addEventListener('click', () => {
 
     // Validate
     if (!category || !question || (!choices[0].text && !choices[0].image)) {
-        alert("Please fill in the category, question, and at least the correct answer (text or image).");
+        showToast("Please fill in the category, question, and at least the correct answer (text or image).");
         return;
     }
 
@@ -557,7 +644,7 @@ window.renameCategory = (oldName) => {
     const newName = prompt("Rename category:", oldName);
     if (newName && newName !== oldName) {
         if (triviaData[newName]) {
-            alert("Category name already exists!");
+            showToast("Category name already exists!");
             return;
         }
         triviaData[newName] = triviaData[oldName];
@@ -573,8 +660,8 @@ window.renameCategory = (oldName) => {
     }
 };
 
-window.deleteCategory = (name) => {
-    if (confirm(`Delete category "${name}" and all its questions?`)) {
+window.deleteCategory = async (name) => {
+    if (await showConfirm(`Delete category "${name}" and all its questions?`)) {
         delete triviaData[name];
         openCategories.delete(name);
         render();
@@ -596,8 +683,8 @@ window.addQuestion = (catName) => {
     render();
 };
 
-window.deleteQuestion = (catName, index) => {
-    if (confirm("Delete this question?")) {
+window.deleteQuestion = async (catName, index) => {
+    if (await showConfirm("Delete this question?")) {
         // Ensure structure
         if (Array.isArray(triviaData[catName])) {
             triviaData[catName] = { questions: triviaData[catName], image: "" };
@@ -684,7 +771,7 @@ window.previewMedia = (catName, index) => {
     const questions = Array.isArray(triviaData[catName]) ? triviaData[catName] : triviaData[catName].questions;
     const media = questions[index].media;
     if (!media || !media.src) {
-        alert("No media source set.");
+        showToast("No media source set.");
         return;
     }
 
@@ -756,7 +843,7 @@ async function saveJSON() {
             const writable = await handle.createWritable();
             await writable.write(dataStr);
             await writable.close();
-            alert("Saved successfully!");
+            showToast("Saved successfully!");
             return;
         } catch (err) {
             if (err.name !== 'AbortError') {
@@ -808,7 +895,7 @@ async function handleManifestFilesSelect(e) {
             
         } catch (err) {
             console.error(`Error processing file ${file.name}:`, err);
-            alert(`Error processing ${file.name}. Skipping.`);
+            showToast(`Error processing ${file.name}. Skipping.`);
             return null;
         }
     });
@@ -835,7 +922,7 @@ async function handleManifestFilesSelect(e) {
             const writable = await handle.createWritable();
             await writable.write(dataStr);
             await writable.close();
-            alert("Manifest saved successfully!");
+            showToast("Manifest saved successfully!");
             e.target.value = ''; // Reset input
             return;
         } catch (err) {
@@ -845,7 +932,7 @@ async function handleManifestFilesSelect(e) {
             }
             console.error("Save As failed:", err);
             // Clean fallback prompt
-            if (!confirm("Unable to open 'Save As' dialog. Download 'games_manifest.json' to your default download folder instead?")) {
+            if (!await showConfirm("Unable to open 'Save As' dialog. Download 'games_manifest.json' to your default download folder instead?")) {
                 e.target.value = '';
                 return;
             }
