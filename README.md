@@ -148,7 +148,9 @@ Users are responsible for complying with the respective third-party license term
 ## Credits
 
 Concept & Caregiving: Nancy & Ari
+
 Development: AI-assisted (ChatGPT / GitHub Copilot) & NarbeHouse
+
 Libraries: Electron, Three.js, Ammo.js, Discord.py, PySide6
 
 ---
