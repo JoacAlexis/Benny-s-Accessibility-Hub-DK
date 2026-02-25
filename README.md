@@ -36,7 +36,7 @@ Located in `bennyshub/apps/games/`:
 - **Trivia Master** — Customizable trivia with local/online question packs
 - **Word Jumble** — Word unscrambling game
 - **Matchy Match** — Memory matching game
-- **Benny's Peggle** — Peggle-style arcade game
+- **Benny's P3GL** — Peggle-style arcade game
 - **Bug Blaster** — Arcade tower defense game
 - **Chess & Checkers** — Classic board games
 - **Mini Golf** — Course-based mini golf with course creator
