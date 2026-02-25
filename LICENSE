@@ -1,60 +1,21 @@
-Benny's Accessibility Hub 2.0 License
+MIT License
 
 Copyright (c) 2026 NarbeHouse, LLC
 
-1. Grant of Permission (Non-Commercial Use Only)
-
 Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to use,
-copy, modify, and share the Software for personal, educational, or other
-non-commercial purposes only.
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
 
-This includes use by individuals with disabilities, families, caregivers,
-educators, and researchers.
-
-2. Commercial Use Prohibited
-
-Commercial use of the Software is strictly prohibited without prior written
-permission from NarbeHouse, LLC.
-
-Commercial use includes, but is not limited to:
-
-- Selling the Software or any derivative works
-- Charging money for access to the Software
-- Bundling the Software into a paid product or service
-- Using the Software in a business or for-profit environment
-- Offering consulting, hosting, customization, or support services for a fee
-  that are based on the Software
-
-Any commercial use requires explicit written authorization from
-NarbeHouse, LLC.
-
-3. Redistribution
-
-You may redistribute copies of the Software for non-commercial purposes only,
-provided that:
-
-- This License is included in all copies
-- Proper credit is given to the original project
-- No additional restrictions are imposed on recipients
-
-4. Third-Party Components
-
-This Software includes third-party libraries and dependencies that are
-licensed separately from this repository. These components remain subject
-to their original licenses. Nothing in this License modifies or overrides
-the terms of any third-party licenses.
-
-Users are responsible for complying with the license terms of any
-third-party components included in or used by this Software.
-
-5. No Warranty
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT.
-
-IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-DAMAGES, OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR
-OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE
-USE OR OTHER DEALINGS IN THE SOFTWARE.
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
