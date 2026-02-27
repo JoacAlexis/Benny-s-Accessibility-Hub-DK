@@ -1,0 +1,16 @@
+# Run OS 12 Bookworm
+
+#make virtual environment
+sudo apt install python3-virtualenv
+python3 -m venv eyeenv --system-site-packages
+source eyeenv/bin/activate
+
+#install packages
+pip3 install mediapipe opencv-python
+
+#clone repository
+git clone https://github.com/JoacAlexis/Benny-s-Accessibility-Hub-DK.git
+
+#re-install numpy to run correct version
+pip3 uninstall numpy
+pip3 install numpy==1.26.4
